@@ -38,6 +38,7 @@ func availableClusterDiagnostics() types.DiagnosticList {
 		&clustdiags.ClusterRouter{},
 		&clustdiags.ClusterRoles{},
 		&clustdiags.ClusterRoleBindings{},
+		&clustdiags.SCC{},
 		&clustdiags.MasterNode{},
 		&clustdiags.MetricsApiProxy{},
 		&clustdiags.NodeDefinitions{},
@@ -128,6 +129,8 @@ func (o DiagnosticsOptions) buildClusterDiagnostics(rawConfig *clientcmdapi.Conf
 			d = &clustdiags.ClusterRoles{ClusterRolesClient: rbacClient.ClusterRoles(), SARClient: kclusterClient.Authorization()}
 		case clustdiags.ClusterRoleBindingsName:
 			d = &clustdiags.ClusterRoleBindings{ClusterRoleBindingsClient: rbacClient.ClusterRoleBindings(), SARClient: kclusterClient.Authorization()}
+		case clustdiags.SccName:
+			d = &clustdiags.SCC{SCCClient: securityClient.Security().SecurityContextConstraints(), SARClient: kclusterClient.Authorization()}
 		case clustdiags.MetricsApiProxyName:
 			d = &clustdiags.MetricsApiProxy{KubeClient: kclusterClient}
 		case clustdiags.ServiceExternalIPsName:
