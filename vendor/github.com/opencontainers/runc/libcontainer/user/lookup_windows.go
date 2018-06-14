@@ -3,33 +3,38 @@
 package user
 
 import (
-	"errors"
-	"io"
+	"fmt"
+	"os/user"
 )
 
-var notSupported = errors.New("not supported in this build")
-
-func GetPasswdPath() (string, error) {
-	return "", notSupported
+func lookupUser(username string) (User, error) {
+	u, err := user.Lookup(username)
+	if err != nil {
+		return User{}, err
+	}
+	return userFromOS(u)
 }
 
-func GetPasswd() (io.ReadCloser, error) {
-	return nil, notSupported
+func lookupUid(uid int) (User, error) {
+	u, err := user.LookupId(fmt.Sprintf("%d", uid))
+	if err != nil {
+		return User{}, err
+	}
+	return userFromOS(u)
 }
 
-func GetGroupPath() (string, error) {
-	return "", notSupported
+func lookupGroup(groupname string) (Group, error) {
+	g, err := user.LookupGroup(groupname)
+	if err != nil {
+		return Group{}, err
+	}
+	return groupFromOS(g)
 }
 
-func GetGroup() (io.ReadCloser, error) {
-	return nil, notSupported
+func lookupGid(gid int) (Group, error) {
+	g, err := user.LookupGroupId(fmt.Sprintf("%d", gid))
+	if err != nil {
+		return Group{}, err
+	}
+	return groupFromOS(g)
 }
-
-func CurrentUser() (User, error) {
-	return User{}, notSupported
-}
-
-func CurrentGroup() (Group, error) {
-	return Group{}, notSupported
-}
-
