@@ -17,6 +17,7 @@ import (
 	"github.com/golang/glog"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"k8s.io/kubernetes/pkg/kubectl/genericclioptions"
 
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -85,7 +86,7 @@ var (
 )
 
 // NewCmdUp creates a command that starts OpenShift on Docker with reasonable defaults
-func NewCmdUp(name, fullName string, out, errout io.Writer, clusterAdd *cobra.Command) *cobra.Command {
+func NewCmdUp(name, fullName string, f genericclioptions.RESTClientGetter, out, errout io.Writer, clusterAdd *cobra.Command) *cobra.Command {
 	config := &ClusterUpConfig{
 		UserEnabledComponents: []string{"*"},
 
@@ -106,7 +107,7 @@ func NewCmdUp(name, fullName string, out, errout io.Writer, clusterAdd *cobra.Co
 		Long:    cmdUpLong,
 		Example: fmt.Sprintf(cmdUpExample, fullName),
 		Run: func(c *cobra.Command, args []string) {
-			kcmdutil.CheckErr(config.Complete(c))
+			kcmdutil.CheckErr(config.Complete(f, c))
 			kcmdutil.CheckErr(config.Validate())
 			kcmdutil.CheckErr(config.Check())
 			if err := config.Start(out); err != nil {
@@ -225,7 +226,7 @@ func init() {
 	}
 }
 
-func (c *ClusterUpConfig) Complete(cmd *cobra.Command) error {
+func (c *ClusterUpConfig) Complete(f genericclioptions.RESTClientGetter, cmd *cobra.Command) error {
 	// TODO: remove this when we move to container/apply based component installation
 	aggregatorinstall.Install(legacyscheme.Scheme)
 
@@ -239,8 +240,7 @@ func (c *ClusterUpConfig) Complete(cmd *cobra.Command) error {
 
 	// Get the default client config for login
 	var err error
-	flags := pflag.NewFlagSet("", pflag.ContinueOnError)
-	c.defaultClientConfig, err = kcmdutil.DefaultClientConfig(flags).RawConfig()
+	c.defaultClientConfig, err = f.ToRawKubeConfigLoader().RawConfig()
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return err
