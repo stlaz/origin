@@ -26,7 +26,6 @@ import (
 	restclient "k8s.io/client-go/rest"
 	kapi "k8s.io/kubernetes/pkg/apis/core"
 	kclientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
-	rbacclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/rbac/internalversion"
 
 	"github.com/openshift/library-go/pkg/crypto"
 	authorizationclient "github.com/openshift/origin/pkg/authorization/generated/internalclientset"
@@ -40,7 +39,6 @@ import (
 	newproject "github.com/openshift/origin/pkg/oc/admin/project"
 	projectclient "github.com/openshift/origin/pkg/project/generated/internalclientset/typed/project/internalversion"
 	"github.com/openshift/origin/test/util"
-
 	// install all APIs
 
 	_ "github.com/openshift/origin/pkg/api/install"
@@ -660,7 +658,7 @@ func CreateNewProject(clientConfig *restclient.Config, projectName, adminUser st
 	if err != nil {
 		return nil, nil, err
 	}
-	rbacClient, err := rbacclient.NewForConfig(clientConfig)
+	kubeExternalClient, err := kubeclient.NewForConfig(clientConfig)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -672,7 +670,7 @@ func CreateNewProject(clientConfig *restclient.Config, projectName, adminUser st
 
 	newProjectOptions := &newproject.NewProjectOptions{
 		ProjectClient: projectClient,
-		RbacClient:    rbacClient,
+		RbacClient:    kubeExternalClient.RbacV1(),
 		SARClient:     authorizationInterface.SubjectAccessReviews(),
 		ProjectName:   projectName,
 		AdminRole:     bootstrappolicy.AdminRoleName,
