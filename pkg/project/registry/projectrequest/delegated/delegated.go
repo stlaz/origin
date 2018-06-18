@@ -7,10 +7,11 @@ import (
 	"strings"
 
 	"github.com/golang/glog"
-
 	kapierror "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metainternal "k8s.io/apimachinery/pkg/apis/meta/internalversion"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -18,7 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	apirequest "k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/registry/rest"
-	restclient "k8s.io/client-go/rest"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	authorizationapi "k8s.io/kubernetes/pkg/apis/authorization"
@@ -26,11 +27,9 @@ import (
 	"k8s.io/kubernetes/pkg/apis/rbac"
 	authorizationclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/authorization/internalversion"
 	rbaclisters "k8s.io/kubernetes/pkg/client/listers/rbac/internalversion"
-	"k8s.io/kubernetes/pkg/kubectl/genericclioptions/resource"
 
 	osauthorizationapi "github.com/openshift/origin/pkg/authorization/apis/authorization"
 	authorizationutil "github.com/openshift/origin/pkg/authorization/util"
-	configcmd "github.com/openshift/origin/pkg/bulk"
 	"github.com/openshift/origin/pkg/cmd/server/bootstrappolicy"
 	projectapi "github.com/openshift/origin/pkg/project/apis/project"
 	projectclientinternal "github.com/openshift/origin/pkg/project/generated/internalclientset/typed/project/internalversion"
@@ -38,7 +37,6 @@ import (
 	templateapi "github.com/openshift/origin/pkg/template/apis/template"
 	templateinternalclient "github.com/openshift/origin/pkg/template/client/internalversion"
 	templateclient "github.com/openshift/origin/pkg/template/generated/internalclientset"
-	restutil "github.com/openshift/origin/pkg/util/rest"
 )
 
 type REST struct {
@@ -49,7 +47,8 @@ type REST struct {
 	sarClient      authorizationclient.SubjectAccessReviewInterface
 	projectGetter  projectclientinternal.ProjectsGetter
 	templateClient templateclient.Interface
-	restConfig     *restclient.Config
+	client         dynamic.Interface
+	restMapper     meta.RESTMapper
 
 	// policyBindings is an auth cache that is shared with the authorizer for the API server.
 	// we use this cache to detect when the authorizer has observed the change for the auth rules
@@ -60,7 +59,13 @@ var _ rest.Lister = &REST{}
 var _ rest.Creater = &REST{}
 var _ rest.Scoper = &REST{}
 
-func NewREST(message, templateNamespace, templateName string, projectClient projectclientinternal.ProjectsGetter, templateClient templateclient.Interface, sarClient authorizationclient.SubjectAccessReviewInterface, restConfig *restclient.Config, roleBindings rbaclisters.RoleBindingLister) *REST {
+func NewREST(message, templateNamespace, templateName string,
+	projectClient projectclientinternal.ProjectsGetter,
+	templateClient templateclient.Interface,
+	sarClient authorizationclient.SubjectAccessReviewInterface,
+	client dynamic.Interface,
+	restMapper meta.RESTMapper,
+	roleBindings rbaclisters.RoleBindingLister) *REST {
 	return &REST{
 		message:           message,
 		templateNamespace: templateNamespace,
@@ -68,7 +73,8 @@ func NewREST(message, templateNamespace, templateName string, projectClient proj
 		projectGetter:     projectClient,
 		templateClient:    templateClient,
 		sarClient:         sarClient,
-		restConfig:        restConfig,
+		client:            client,
+		restMapper:        restMapper,
 		roleBindings:      roleBindings,
 	}
 }
@@ -195,36 +201,38 @@ func (r *REST) Create(ctx context.Context, obj runtime.Object, createValidation 
 		return nil, err
 	}
 
-	// Stop on the first error, since we have to delete the whole project if any item in the template fails
-	stopOnErr := configcmd.AfterFunc(func(info *resource.Info, err error) bool {
-		// if a default role binding already exists, we're probably racing the controller.  Don't die
-		if gvk := info.Mapping.GroupVersionKind; kapierror.IsAlreadyExists(err) &&
-			gvk.Kind == roleBindingKind && roleBindingGroups.Has(gvk.Group) && defaultRoleBindingNames.Has(info.Name) {
-			return false
-		}
-		return err != nil
-	})
-
-	bulk := configcmd.Bulk{
-		Mapper: &resource.Mapper{
-			RESTMapper:   restutil.DefaultMultiRESTMapper(),
-			ObjectTyper:  legacyscheme.Scheme,
-			ClientMapper: configcmd.ClientMapperFromConfig(r.restConfig),
-		},
-		IgnoreError: func(err error) bool {
-			// it is safe to ignore all such errors since stopOnErr will only let these through for the default role bindings
-			return kapierror.IsAlreadyExists(err)
-		},
-		After: stopOnErr,
-		Op:    configcmd.Create,
-	}
-	if err := utilerrors.NewAggregate(bulk.Run(objectsToCreate, createdProject.Name)); err != nil {
-		utilruntime.HandleError(fmt.Errorf("error creating items in requested project %q: %v", createdProject.Name, err))
-		// We have to clean up the project if any part of the project request template fails
-		if deleteErr := r.projectGetter.Projects().Delete(createdProject.Name, &metav1.DeleteOptions{}); deleteErr != nil {
-			utilruntime.HandleError(fmt.Errorf("error cleaning up requested project %q: %v", createdProject.Name, deleteErr))
-		}
+	// TODO, stop doing this crazy thing, but for now it's a very simple way to get the unstructured objects we need
+	jsonBytes, err := runtime.Encode(legacyscheme.Codecs.LegacyCodec(legacyscheme.Scheme.PrioritizedVersionsAllGroups()...), objectsToCreate)
+	if err != nil {
 		return nil, kapierror.NewInternalError(err)
+	}
+	uncastList, err := runtime.Decode(unstructured.UnstructuredJSONScheme, jsonBytes)
+	if err != nil {
+		return nil, kapierror.NewInternalError(err)
+	}
+	toCreateList := uncastList.(*unstructured.UnstructuredList)
+
+	for _, toCreate := range toCreateList.Items {
+		restMapping, mappingErr := r.restMapper.RESTMapping(toCreate.GroupVersionKind().GroupKind(), toCreate.GroupVersionKind().Version)
+		if mappingErr != nil {
+			utilruntime.HandleError(fmt.Errorf("error creating items in requested project %q: %v", createdProject.Name, mappingErr))
+			return nil, kapierror.NewInternalError(mappingErr)
+		}
+
+		_, createErr := r.client.Resource(restMapping.Resource).Namespace(createdProject.Name).Create(&toCreate)
+		// if a default role binding already exists, we're probably racing the controller.  Don't die
+		if gvk := restMapping.GroupVersionKind; kapierror.IsAlreadyExists(createErr) &&
+			gvk.Kind == roleBindingKind && roleBindingGroups.Has(gvk.Group) && defaultRoleBindingNames.Has(toCreate.GetName()) {
+			continue
+		}
+		// it is safe to ignore all such errors since stopOnErr will only let these through for the default role bindings
+		if kapierror.IsAlreadyExists(createErr) {
+			continue
+		}
+		if createErr != nil {
+			utilruntime.HandleError(fmt.Errorf("error creating items in requested project %q: %v", createdProject.Name, createErr))
+			return nil, kapierror.NewInternalError(createErr)
+		}
 	}
 
 	// wait for a rolebinding if we created one
