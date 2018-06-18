@@ -16,10 +16,12 @@ import (
 	"github.com/spf13/cobra"
 	kapierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/dynamic"
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	kapi "k8s.io/kubernetes/pkg/apis/core"
@@ -29,10 +31,11 @@ import (
 	"k8s.io/kubernetes/pkg/kubectl/cmd/templates"
 	kcmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 	"k8s.io/kubernetes/pkg/kubectl/genericclioptions"
-	"k8s.io/kubernetes/pkg/kubectl/genericclioptions/resource"
+	"k8s.io/kubernetes/pkg/kubectl/polymorphichelpers"
 
+	buildv1 "github.com/openshift/api/build/v1"
 	buildapi "github.com/openshift/origin/pkg/build/apis/build"
-	configcmd "github.com/openshift/origin/pkg/bulk"
+	"github.com/openshift/origin/pkg/bulk"
 	cmdutil "github.com/openshift/origin/pkg/cmd/util"
 	"github.com/openshift/origin/pkg/cmd/util/print"
 	"github.com/openshift/origin/pkg/git"
@@ -130,7 +133,7 @@ To search templates, image streams, and Docker images that match the arguments p
 )
 
 type ObjectGeneratorOptions struct {
-	Action configcmd.BulkAction
+	Action bulk.BulkAction
 	Config *newcmd.AppConfig
 
 	BaseName    string
@@ -140,7 +143,7 @@ type ObjectGeneratorOptions struct {
 	In            io.Reader
 	ErrOut        io.Writer
 	PrintObject   func(obj runtime.Object) error
-	LogsForObject LogsForObjectFunc
+	LogsForObject polymorphichelpers.LogsForObjectFunc
 }
 
 type NewAppOptions struct {
@@ -164,29 +167,22 @@ func (o *ObjectGeneratorOptions) Complete(baseName, commandName string, f kcmdut
 	}
 	o.Config.ErrOut = o.ErrOut
 
-	clientConfig, err := f.ClientConfig()
+	clientConfig, err := f.ToRESTConfig()
+	if err != nil {
+		return err
+	}
+	mapper, err := f.ToRESTMapper()
+	if err != nil {
+		return err
+	}
+	dynamicClient, err := dynamic.NewForConfig(clientConfig)
 	if err != nil {
 		return err
 	}
 
-	mapper, typer := f.Object()
-
-	// ignore errors.   We use this to make a best guess at preferred seralizations, but the command might run without a server
-	discoveryClient, _ := f.DiscoveryClient()
-
 	o.Action.Out, o.Action.ErrOut = out, o.ErrOut
-	o.Action.Bulk.DynamicMapper = &resource.Mapper{
-		RESTMapper:   mapper,
-		ObjectTyper:  typer,
-		ClientMapper: resource.ClientMapperFunc(f.UnstructuredClientForMapping),
-	}
-	o.Action.Bulk.Mapper = &resource.Mapper{
-		RESTMapper:   mapper,
-		ObjectTyper:  typer,
-		ClientMapper: configcmd.ClientMapperFromConfig(clientConfig),
-	}
-	o.Action.Bulk.PreferredSerializationOrder = configcmd.PreferredSerializationOrder(discoveryClient)
-	o.Action.Bulk.Op = configcmd.Create
+	o.Action.Bulk.Scheme = legacyscheme.Scheme
+	o.Action.Bulk.Op = bulk.Creator{Client: dynamicClient, RESTMapper: mapper}.Create
 	// Retry is used to support previous versions of the API server that will
 	// consider the presence of an unknown trigger type to be an error.
 	o.Action.Bulk.Retry = retryBuildConfig
@@ -199,7 +195,7 @@ func (o *ObjectGeneratorOptions) Complete(baseName, commandName string, f kcmdut
 	o.BaseName = baseName
 	o.CommandName = commandName
 
-	o.PrintObject = print.VersionedPrintObject(legacyscheme.Scheme, legacyscheme.Registry, kcmdutil.PrintObject, c, out)
+	o.PrintObject = print.VersionedPrintObject(kcmdutil.PrintObject, c, out)
 	o.LogsForObject = f.LogsForObject
 	if err := CompleteAppConfig(o.Config, f, c, args); err != nil {
 		return err
@@ -339,7 +335,7 @@ func (o *NewAppOptions) RunNewApp() error {
 		o.Action.Compact()
 	}
 
-	if errs := o.Action.WithMessage(configcmd.CreateMessage(config.Labels), "created").Run(result.List, result.Namespace); len(errs) > 0 {
+	if errs := o.Action.WithMessage(bulk.CreateMessage(config.Labels), "created").Run(result.List, result.Namespace); len(errs) > 0 {
 		return kcmdutil.ErrExit
 	}
 
@@ -405,8 +401,7 @@ func (o *NewAppOptions) RunNewApp() error {
 
 	switch {
 	case len(installing) == 1:
-		jobInput := installing[0].Annotations[newcmd.GeneratedForJobFor]
-		return followInstallation(config, jobInput, installing[0], o.LogsForObject)
+		return followInstallation(config, installing[0], o.LogsForObject)
 	case len(installing) > 1:
 		for i := range installing {
 			fmt.Fprintf(out, "%sTrack installation of %s with '%s logs %s'.\n", indent, installing[i].Name, o.BaseName, installing[i].Name)
@@ -428,8 +423,6 @@ func (o *NewAppOptions) RunNewApp() error {
 	return nil
 }
 
-type LogsForObjectFunc func(object, options runtime.Object, timeout time.Duration) (*restclient.Request, error)
-
 func getServices(items []runtime.Object) []*kapi.Service {
 	var svc []*kapi.Service
 	for _, i := range items {
@@ -441,7 +434,7 @@ func getServices(items []runtime.Object) []*kapi.Service {
 	return svc
 }
 
-func followInstallation(config *newcmd.AppConfig, input string, pod *kapi.Pod, logsForObjectFn LogsForObjectFunc) error {
+func followInstallation(config *newcmd.AppConfig, pod *kapi.Pod, logsForObjectFn polymorphichelpers.LogsForObjectFunc) error {
 	fmt.Fprintf(config.Out, "--> Installing ...\n")
 
 	// we cannot retrieve logs until the pod is out of pending
@@ -458,8 +451,6 @@ func followInstallation(config *newcmd.AppConfig, input string, pod *kapi.Pod, l
 			Follow:    true,
 			Container: pod.Spec.Containers[0].Name,
 		},
-		Mapper:        config.Mapper,
-		Typer:         config.Typer,
 		LogsForObject: logsForObjectFn,
 		IOStreams:     genericclioptions.IOStreams{Out: config.Out},
 	}
@@ -556,24 +547,21 @@ func getDockerClient() (*docker.Client, error) {
 }
 
 func CompleteAppConfig(config *newcmd.AppConfig, f kcmdutil.Factory, c *cobra.Command, args []string) error {
-	mapper, typer := f.Object()
 	if config.Builder == nil {
 		config.Builder = f.NewBuilder()
+	}
+	mapper, err := f.ToRESTMapper()
+	if err != nil {
+		return err
 	}
 	if config.Mapper == nil {
 		config.Mapper = mapper
 	}
 	if config.Typer == nil {
-		config.Typer = typer
-	}
-	if config.ClientMapper == nil {
-		config.ClientMapper = resource.ClientMapperFunc(f.ClientForMapping)
-	}
-	if config.CategoryExpander == nil {
-		config.CategoryExpander = f.CategoryExpander()
+		config.Typer = legacyscheme.Scheme
 	}
 
-	namespace, _, err := f.DefaultNamespace()
+	namespace, _, err := f.ToRawKubeConfigLoader().Namespace()
 	if err != nil {
 		return err
 	}
@@ -706,27 +694,34 @@ func isInvalidTriggerError(err error) bool {
 // retryBuildConfig determines if the given error is caused by an invalid trigger
 // error on a BuildConfig. If that is the case, it will remove all triggers with a
 // type that is not in the whitelist for an older server.
-func retryBuildConfig(info *resource.Info, err error) runtime.Object {
-	triggerTypeWhiteList := map[buildapi.BuildTriggerType]struct{}{
-		buildapi.GitHubWebHookBuildTriggerType:    {},
-		buildapi.GenericWebHookBuildTriggerType:   {},
-		buildapi.ImageChangeBuildTriggerType:      {},
-		buildapi.GitLabWebHookBuildTriggerType:    {},
-		buildapi.BitbucketWebHookBuildTriggerType: {},
+func retryBuildConfig(obj *unstructured.Unstructured, err error) *unstructured.Unstructured {
+	triggerTypeWhiteList := map[buildv1.BuildTriggerType]struct{}{
+		buildv1.GitHubWebHookBuildTriggerType:    {},
+		buildv1.GenericWebHookBuildTriggerType:   {},
+		buildv1.ImageChangeBuildTriggerType:      {},
+		buildv1.GitLabWebHookBuildTriggerType:    {},
+		buildv1.BitbucketWebHookBuildTriggerType: {},
 	}
-	if buildapi.Kind("BuildConfig") == info.Mapping.GroupVersionKind.GroupKind() && isInvalidTriggerError(err) {
-		bc, ok := info.Object.(*buildapi.BuildConfig)
-		if !ok {
+	if buildapi.Kind("BuildConfig") == obj.GroupVersionKind().GroupKind() && isInvalidTriggerError(err) {
+		var bc *buildv1.BuildConfig
+		err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.Object, bc)
+		if err != nil {
 			return nil
 		}
-		triggers := []buildapi.BuildTriggerPolicy{}
+
+		triggers := []buildv1.BuildTriggerPolicy{}
 		for _, t := range bc.Spec.Triggers {
 			if _, inList := triggerTypeWhiteList[t.Type]; inList {
 				triggers = append(triggers, t)
 			}
 		}
 		bc.Spec.Triggers = triggers
-		return bc
+
+		retUnstructured, err := runtime.DefaultUnstructuredConverter.ToUnstructured(bc)
+		if err != nil {
+			return nil
+		}
+		return &unstructured.Unstructured{Object: retUnstructured}
 	}
 	return nil
 }
