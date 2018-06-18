@@ -22,7 +22,6 @@ import (
 	"k8s.io/client-go/util/retry"
 	kapi "k8s.io/kubernetes/pkg/apis/core"
 
-	"github.com/openshift/origin/pkg/bulk"
 	routeapi "github.com/openshift/origin/pkg/route/apis/route"
 	templateapi "github.com/openshift/origin/pkg/template/apis/template"
 	"github.com/openshift/origin/pkg/templateservicebroker/openservicebroker/api"
@@ -204,30 +203,20 @@ func (b *Broker) Bind(u user.Info, instanceID, bindingID string, breq *api.BindR
 		if err := util.Authorize(b.kc.Authorization().SubjectAccessReviews(), u, &authorizationv1.ResourceAttributes{
 			Namespace: object.Ref.Namespace,
 			Verb:      "get",
-			Group:     object.Ref.GroupVersionKind().Group,
-			Resource:  mapping.Resource,
+			Group:     mapping.Resource.Group,
+			Resource:  mapping.Resource.Resource,
 			Name:      object.Ref.Name,
 		}); err != nil {
 			return api.Forbidden(err)
 		}
 
-		cli, err := bulk.ClientMapperFromConfig(b.extconfig).ClientForMapping(mapping)
+		obj, err := b.dynamicClient.Resource(mapping.Resource).Namespace(object.Ref.Namespace).Get(object.Ref.Name, metav1.GetOptions{})
 		if err != nil {
 			return api.InternalServerError(err)
 		}
 
-		obj, err := cli.Get().Resource(mapping.Resource).NamespaceIfScoped(object.Ref.Namespace, mapping.Scope.Name() == meta.RESTScopeNameNamespace).Name(object.Ref.Name).Do().Get()
-		if err != nil {
-			return api.InternalServerError(err)
-		}
-
-		meta, err := meta.Accessor(obj)
-		if err != nil {
-			return api.InternalServerError(err)
-		}
-
-		if meta.GetUID() != object.Ref.UID {
-			return api.InternalServerError(kerrors.NewNotFound(schema.GroupResource{Group: mapping.GroupVersionKind.Group, Resource: mapping.Resource}, object.Ref.Name))
+		if obj.GetUID() != object.Ref.UID {
+			return api.InternalServerError(kerrors.NewNotFound(mapping.Resource.GroupResource(), object.Ref.Name))
 		}
 
 		err = updateCredentialsForObject(credentials, obj)
