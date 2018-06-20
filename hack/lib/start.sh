@@ -530,7 +530,7 @@ function os::start::internal::openshift_executable() {
 			done
 		fi
 
-		openshift_executable="${sudo} ${envvars} $(which openshift)"
+		openshift_executable="${sudo} $(which openshift)"
 	fi
 
 	echo "${openshift_executable}"
