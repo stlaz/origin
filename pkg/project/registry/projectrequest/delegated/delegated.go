@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/golang/glog"
 	kapierror "k8s.io/apimachinery/pkg/api/errors"
@@ -220,7 +221,16 @@ func (r *REST) Create(ctx context.Context, obj runtime.Object, createValidation 
 
 	// TODO, stop doing this crazy thing, but for now it's a very simple way to get the unstructured objects we need
 	for _, toCreate := range objectsToCreate {
-		restMapping, mappingErr := r.restMapper.RESTMapping(toCreate.GroupVersionKind().GroupKind(), toCreate.GroupVersionKind().Version)
+		var restMapping *meta.RESTMapping
+		var mappingErr error
+		for i := 0; i < 3; i++ {
+			restMapping, mappingErr = r.restMapper.RESTMapping(toCreate.GroupVersionKind().GroupKind(), toCreate.GroupVersionKind().Version)
+			if mappingErr == nil {
+				break
+			}
+			// the refresh is every 10 seconds
+			time.Sleep(11 * time.Second)
+		}
 		if mappingErr != nil {
 			utilruntime.HandleError(fmt.Errorf("error creating items in requested project %q: %v", createdProject.Name, mappingErr))
 			return nil, kapierror.NewInternalError(mappingErr)
