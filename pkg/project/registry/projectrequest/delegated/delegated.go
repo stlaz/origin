@@ -13,7 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -23,11 +23,11 @@ import (
 	"k8s.io/client-go/util/retry"
 	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	authorizationapi "k8s.io/kubernetes/pkg/apis/authorization"
-	kapi "k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/kubernetes/pkg/apis/rbac"
 	authorizationclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/authorization/internalversion"
 	rbaclisters "k8s.io/kubernetes/pkg/client/listers/rbac/internalversion"
 
+	projectapiv1 "github.com/openshift/api/project/v1"
 	osauthorizationapi "github.com/openshift/origin/pkg/authorization/apis/authorization"
 	authorizationutil "github.com/openshift/origin/pkg/authorization/util"
 	"github.com/openshift/origin/pkg/cmd/server/bootstrappolicy"
@@ -35,7 +35,6 @@ import (
 	projectclientinternal "github.com/openshift/origin/pkg/project/generated/internalclientset/typed/project/internalversion"
 	projectrequestregistry "github.com/openshift/origin/pkg/project/registry/projectrequest"
 	templateapi "github.com/openshift/origin/pkg/template/apis/template"
-	templateinternalclient "github.com/openshift/origin/pkg/template/client/internalversion"
 	templateclient "github.com/openshift/origin/pkg/template/generated/internalclientset"
 )
 
@@ -154,38 +153,56 @@ func (r *REST) Create(ctx context.Context, obj runtime.Object, createValidation 
 		}
 	}
 
-	tc := templateinternalclient.NewTemplateProcessorClient(r.templateClient.Template().RESTClient(), metav1.NamespaceDefault)
-	list, err := tc.Process(template)
+	versionedTemplate, err := legacyscheme.Scheme.ConvertToVersion(template, schema.GroupVersion{Group: "template.openshift.io", Version: "v1"})
 	if err != nil {
 		return nil, err
 	}
-	if err := utilerrors.NewAggregate(runtime.DecodeList(list.Objects, legacyscheme.Codecs.UniversalDecoder())); err != nil {
-		return nil, kapierror.NewInternalError(err)
+	unstructuredTemplate, err := runtime.DefaultUnstructuredConverter.ToUnstructured(versionedTemplate)
+	if err != nil {
+		return nil, err
+	}
+	processedTemplate, err := r.client.Resource(schema.GroupVersionResource{Group: "template.openshift.io", Version: "v1", Resource: "processedtemplates"}).
+		Namespace("default").Create(&unstructured.Unstructured{Object: unstructuredTemplate})
+	// convert the template into something we iterate over as a list
+	if err := unstructured.SetNestedField(processedTemplate.Object, processedTemplate.Object["objects"], "items"); err != nil {
+		return nil, err
+	}
+	processedList, err := processedTemplate.ToList()
+	if err != nil {
+		return nil, err
 	}
 
 	// one of the items in this list should be the project.  We are going to locate it, remove it from the list, create it separately
 	var projectFromTemplate *projectapi.Project
 	lastRoleBindingName := ""
-	objectsToCreate := &kapi.List{}
-	for i := range list.Objects {
-		switch t := list.Objects[i].(type) {
-		case *projectapi.Project:
+	objectsToCreate := []*unstructured.Unstructured{}
+	for i := range processedList.Items {
+		item := processedList.Items[i]
+		switch item.GroupVersionKind().GroupKind() {
+		case schema.GroupKind{Group: "project.openshift.io", Kind: "Project"}:
 			if projectFromTemplate != nil {
 				return nil, kapierror.NewInternalError(fmt.Errorf("the project template (%s/%s) is not correctly configured: must contain only one project resource", r.templateNamespace, r.templateName))
 			}
-			projectFromTemplate = t
+			externalProjectFromTemplate := &projectapiv1.Project{}
+			err = runtime.DefaultUnstructuredConverter.FromUnstructured(item.Object, externalProjectFromTemplate)
+			if err != nil {
+				return nil, err
+			}
+			projectFromTemplate = &projectapi.Project{}
+			if err := legacyscheme.Scheme.Convert(externalProjectFromTemplate, projectFromTemplate, nil); err != nil {
+				return nil, err
+			}
 			// don't add this to the list to create.  We'll create the project separately.
 			continue
-		case *rbac.RoleBinding:
-			lastRoleBindingName = t.Name
-		case *osauthorizationapi.RoleBinding:
-			lastRoleBindingName = t.Name
+		case schema.GroupKind{Group: "authorization.openshift.io", Kind: "RoleBinding"},
+			schema.GroupKind{Group: "rbac.authorization.k8s.io", Kind: "RoleBinding"}:
+			lastRoleBindingName = item.GetName()
 		default:
 			// noop, we care only for special handling projects and roles
 		}
 
 		// use list.Objects[i] in append to avoid range memory address reuse
-		objectsToCreate.Items = append(objectsToCreate.Items, list.Objects[i])
+		objectsToCreate = append(objectsToCreate, &item)
 	}
 	if projectFromTemplate == nil {
 		return nil, kapierror.NewInternalError(fmt.Errorf("the project template (%s/%s) is not correctly configured: must contain a project resource", r.templateNamespace, r.templateName))
@@ -202,24 +219,14 @@ func (r *REST) Create(ctx context.Context, obj runtime.Object, createValidation 
 	}
 
 	// TODO, stop doing this crazy thing, but for now it's a very simple way to get the unstructured objects we need
-	jsonBytes, err := runtime.Encode(legacyscheme.Codecs.LegacyCodec(legacyscheme.Scheme.PrioritizedVersionsAllGroups()...), objectsToCreate)
-	if err != nil {
-		return nil, kapierror.NewInternalError(err)
-	}
-	uncastList, err := runtime.Decode(unstructured.UnstructuredJSONScheme, jsonBytes)
-	if err != nil {
-		return nil, kapierror.NewInternalError(err)
-	}
-	toCreateList := uncastList.(*unstructured.UnstructuredList)
-
-	for _, toCreate := range toCreateList.Items {
+	for _, toCreate := range objectsToCreate {
 		restMapping, mappingErr := r.restMapper.RESTMapping(toCreate.GroupVersionKind().GroupKind(), toCreate.GroupVersionKind().Version)
 		if mappingErr != nil {
 			utilruntime.HandleError(fmt.Errorf("error creating items in requested project %q: %v", createdProject.Name, mappingErr))
 			return nil, kapierror.NewInternalError(mappingErr)
 		}
 
-		_, createErr := r.client.Resource(restMapping.Resource).Namespace(createdProject.Name).Create(&toCreate)
+		_, createErr := r.client.Resource(restMapping.Resource).Namespace(createdProject.Name).Create(toCreate)
 		// if a default role binding already exists, we're probably racing the controller.  Don't die
 		if gvk := restMapping.GroupVersionKind; kapierror.IsAlreadyExists(createErr) &&
 			gvk.Kind == roleBindingKind && roleBindingGroups.Has(gvk.Group) && defaultRoleBindingNames.Has(toCreate.GetName()) {
