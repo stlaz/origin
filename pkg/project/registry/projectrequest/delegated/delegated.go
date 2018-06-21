@@ -233,6 +233,10 @@ func (r *REST) Create(ctx context.Context, obj runtime.Object, createValidation 
 		}
 		if mappingErr != nil {
 			utilruntime.HandleError(fmt.Errorf("error creating items in requested project %q: %v", createdProject.Name, mappingErr))
+			// We have to clean up the project if any part of the project request template fails
+			if deleteErr := r.projectGetter.Projects().Delete(createdProject.Name, &metav1.DeleteOptions{}); deleteErr != nil {
+				utilruntime.HandleError(fmt.Errorf("error cleaning up requested project %q: %v", createdProject.Name, deleteErr))
+			}
 			return nil, kapierror.NewInternalError(mappingErr)
 		}
 
@@ -248,6 +252,10 @@ func (r *REST) Create(ctx context.Context, obj runtime.Object, createValidation 
 		}
 		if createErr != nil {
 			utilruntime.HandleError(fmt.Errorf("error creating items in requested project %q: %v", createdProject.Name, createErr))
+			// We have to clean up the project if any part of the project request template fails
+			if deleteErr := r.projectGetter.Projects().Delete(createdProject.Name, &metav1.DeleteOptions{}); deleteErr != nil {
+				utilruntime.HandleError(fmt.Errorf("error cleaning up requested project %q: %v", createdProject.Name, deleteErr))
+			}
 			return nil, kapierror.NewInternalError(createErr)
 		}
 	}
