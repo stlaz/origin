@@ -59,7 +59,7 @@ os::test::junit::declare_suite_end
 
 os::test::junit::declare_suite_start "cmd/basicresources/explain"
 os::cmd::expect_failure_and_text 'oc types' 'Deployment Configuration'
-os::cmd::expect_failure_and_text 'oc get' 'deploymentconfig'
+os::cmd::expect_failure_and_text 'oc get' 'oc api-resources'
 os::cmd::expect_success_and_text 'oc get all --loglevel=6' 'buildconfigs'
 os::cmd::expect_success_and_text 'oc explain pods' 'Pod is a collection of containers that can run on a host'
 os::cmd::expect_success_and_text 'oc explain pods.spec' 'SecurityContext holds pod-level security attributes'
@@ -83,7 +83,7 @@ os::test::junit::declare_suite_end
 
 os::test::junit::declare_suite_start "cmd/basicresources/pods"
 os::cmd::expect_success 'oc get pods --match-server-version'
-os::cmd::expect_success_and_text 'oc create -f examples/hello-openshift/hello-pod.json' 'pod "hello-openshift" created'
+os::cmd::expect_success_and_text 'oc create -f examples/hello-openshift/hello-pod.json' 'pod/hello-openshift created'
 os::cmd::expect_success 'oc describe pod hello-openshift'
 os::cmd::expect_success 'oc delete pods hello-openshift --grace-period=0 --force'
 echo "pods: ok"
@@ -249,9 +249,9 @@ os::cmd::expect_success 'oc create -f test/integration/testdata/test-service.jso
 os::cmd::expect_failure 'oc expose service frontend --create-external-load-balancer'
 os::cmd::expect_failure 'oc expose service frontend --port=40 --type=NodePort'
 os::cmd::expect_success 'oc expose service frontend --path=/test'
-os::cmd::expect_success_and_text "oc get route frontend --output-version=v1 --template='{{.spec.path}}'" "/test"
-os::cmd::expect_success_and_text "oc get route frontend --output-version=v1 --template='{{.spec.to.name}}'" "frontend"           # routes to correct service
-os::cmd::expect_success_and_text "oc get route frontend --output-version=v1 --template='{{.spec.port.targetPort}}'" ""
+os::cmd::expect_success_and_text "oc get route.v1.route.openshift.io frontend --template='{{.spec.path}}'" "/test"
+os::cmd::expect_success_and_text "oc get route.v1.route.openshift.io frontend --template='{{.spec.to.name}}'" "frontend"           # routes to correct service
+os::cmd::expect_success_and_text "oc get route.v1.route.openshift.io frontend --template='{{.spec.port.targetPort}}'" ""
 os::cmd::expect_success 'oc delete svc,route -l name=frontend'
 # Test that external services are exposable
 os::cmd::expect_success 'oc create -f test/testdata/external-service.yaml'
