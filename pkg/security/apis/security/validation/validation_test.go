@@ -1,6 +1,7 @@
 package validation
 
 import (
+	"fmt"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -102,6 +103,20 @@ func TestValidateSecurityContextConstraints(t *testing.T) {
 	nonEmptyFlexVolumes := validSCC()
 	nonEmptyFlexVolumes.AllowedFlexVolumes = []securityapi.AllowedFlexVolume{{Driver: "example/driver"}}
 
+	invalidAllowedUnsafeSysctlPattern := validSCC()
+	invalidAllowedUnsafeSysctlPattern.AllowedUnsafeSysctls = []string{"a.*.b"}
+
+	invalidForbiddenSysctlPattern := validSCC()
+	invalidForbiddenSysctlPattern.ForbiddenSysctls = []string{"a.*.b"}
+
+	invalidOverlappingSysctls := validSCC()
+	invalidOverlappingSysctls.ForbiddenSysctls = []string{"kernel.*", "net.ipv4.ip_local_port_range"}
+	invalidOverlappingSysctls.AllowedUnsafeSysctls = []string{"kernel.shmmax", "net.ipv4.ip_local_port_range"}
+
+	invalidDuplicatedSysctls := validSCC()
+	invalidDuplicatedSysctls.ForbiddenSysctls = []string{"net.ipv4.ip_local_port_range"}
+	invalidDuplicatedSysctls.AllowedUnsafeSysctls = []string{"net.ipv4.ip_local_port_range"}
+
 	errorCases := map[string]struct {
 		scc         *securityapi.SecurityContextConstraints
 		errorType   field.ErrorType
@@ -202,6 +217,26 @@ func TestValidateSecurityContextConstraints(t *testing.T) {
 			errorType:   field.ErrorTypeInvalid,
 			errorDetail: "volumes does not include 'flexVolume' or '*', so no flex volumes are allowed",
 		},
+		"invalid allowed unsafe sysctl pattern": {
+			scc:         invalidAllowedUnsafeSysctlPattern,
+			errorType:   field.ErrorTypeInvalid,
+			errorDetail: fmt.Sprintf("must have at most 253 characters and match regex %s", SysctlPatternFmt),
+		},
+		"invalid forbidden sysctl pattern": {
+			scc:         invalidForbiddenSysctlPattern,
+			errorType:   field.ErrorTypeInvalid,
+			errorDetail: fmt.Sprintf("must have at most 253 characters and match regex %s", SysctlPatternFmt),
+		},
+		"invalid overlapping sysctl pattern": {
+			scc:         invalidOverlappingSysctls,
+			errorType:   field.ErrorTypeInvalid,
+			errorDetail: fmt.Sprintf("sysctl overlaps with %s", invalidOverlappingSysctls.ForbiddenSysctls[0]),
+		},
+		"invalid duplicated sysctls": {
+			scc:         invalidDuplicatedSysctls,
+			errorType:   field.ErrorTypeInvalid,
+			errorDetail: fmt.Sprintf("sysctl overlaps with %s", invalidDuplicatedSysctls.AllowedUnsafeSysctls[0]),
+		},
 	}
 
 	for k, v := range errorCases {
@@ -244,6 +279,12 @@ func TestValidateSecurityContextConstraints(t *testing.T) {
 		{Driver: "example/driver2"},
 	}
 
+	withForbiddenSysctl := validSCC()
+	withForbiddenSysctl.ForbiddenSysctls = []string{"net.*"}
+
+	withAllowedUnsafeSysctl := validSCC()
+	withAllowedUnsafeSysctl.AllowedUnsafeSysctls = []string{"net.ipv4.tcp_max_syn_backlog"}
+
 	successCases := map[string]struct {
 		scc *securityapi.SecurityContextConstraints
 	}{
@@ -267,6 +308,12 @@ func TestValidateSecurityContextConstraints(t *testing.T) {
 		},
 		"allow white-listed flexVolume when all volumes are allowed": {
 			scc: flexvolumeWhenAllVolumesAllowed,
+		},
+		"with network sysctls forbidden": {
+			scc: withForbiddenSysctl,
+		},
+		"with unsafe net.ipv4.tcp_max_syn_backlog sysctl allowed": {
+			scc: withAllowedUnsafeSysctl,
 		},
 	}
 
