@@ -3,6 +3,7 @@ package bulk
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -129,6 +130,7 @@ func printSuccess(shortOutput bool, out io.Writer, gvk schema.GroupVersionKind, 
 	if len(gvk.Group) > 0 {
 		kindString = gvk.Kind + "." + gvk.Group
 	}
+	kindString = strings.ToLower(kindString)
 
 	dryRunMsg := ""
 	if dryRun {

@@ -482,6 +482,7 @@ os::cmd::expect_success 'oc adm policy add-cluster-role-to-user --rolebinding-na
 os::cmd::expect_success 'oc adm policy add-cluster-role-to-group --rolebinding-name=cluster-admin cluster-admin cascaded-group orphaned-group'
 
 # Delete users
+os::cmd::expect_success 'oc adm prune auth user/cascaded-user'
 os::cmd::expect_success 'oc delete user  cascaded-user'
 os::cmd::expect_success 'oc delete user  orphaned-user  --cascade=false'
 # Verify all identities remain
@@ -515,7 +516,7 @@ os::test::junit::declare_suite_end
 
 os::test::junit::declare_suite_start "cmd/admin/serviceaccounts"
 # create a new service account
-os::cmd::expect_success_and_text 'oc create serviceaccount my-sa-name' 'serviceaccount "my-sa-name" created'
+os::cmd::expect_success_and_text 'oc create serviceaccount my-sa-name' 'serviceaccount/my-sa-name created'
 os::cmd::expect_success 'oc get sa my-sa-name'
 
 # extract token and ensure it links us back to the service account
