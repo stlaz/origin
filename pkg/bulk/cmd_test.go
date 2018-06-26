@@ -82,7 +82,7 @@ func TestBulkAction(t *testing.T) {
 		t.Fatalf("unexpected: %#v", bt.recorded)
 	}
 	if out.String() != `--> test1 ...
-    Pod "obj1" test2
+    pod "obj1" test2
 --> Success
 ` {
 		t.Fatalf("unexpected: %s", out.String())

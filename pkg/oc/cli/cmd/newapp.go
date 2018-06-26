@@ -14,6 +14,8 @@ import (
 	docker "github.com/fsouza/go-dockerclient"
 	"github.com/golang/glog"
 	"github.com/spf13/cobra"
+
+	corev1 "k8s.io/api/core/v1"
 	kapierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -34,6 +36,8 @@ import (
 	"k8s.io/kubernetes/pkg/kubectl/polymorphichelpers"
 
 	buildv1 "github.com/openshift/api/build/v1"
+	imagev1 "github.com/openshift/api/image/v1"
+	routev1 "github.com/openshift/api/route/v1"
 	buildapi "github.com/openshift/origin/pkg/build/apis/build"
 	"github.com/openshift/origin/pkg/bulk"
 	cmdutil "github.com/openshift/origin/pkg/cmd/util"
@@ -344,20 +348,29 @@ func (o *NewAppOptions) RunNewApp() error {
 	}
 
 	hasMissingRepo := false
-	installing := []*kapi.Pod{}
+	installing := []*corev1.Pod{}
 	indent := o.Action.DefaultIndent()
 	containsRoute := false
 	for _, item := range result.List.Items {
-		switch t := item.(type) {
-		case *kapi.Pod:
+		// these are all unstructured
+		unstructuredObj := item.(*unstructured.Unstructured)
+		obj, err := legacyscheme.Scheme.New(unstructuredObj.GroupVersionKind())
+		if err != nil {
+			return err
+		}
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(unstructuredObj.Object, obj); err != nil {
+			return err
+		}
+		switch t := obj.(type) {
+		case *corev1.Pod:
 			if t.Annotations[newcmd.GeneratedForJob] == "true" {
 				installing = append(installing, t)
 			}
-		case *buildapi.BuildConfig:
+		case *buildv1.BuildConfig:
 			triggered := false
 			for _, trigger := range t.Spec.Triggers {
 				switch trigger.Type {
-				case buildapi.ImageChangeBuildTriggerType, buildapi.ConfigChangeBuildTriggerType:
+				case buildv1.ImageChangeBuildTriggerType, buildv1.ConfigChangeBuildTriggerType:
 					triggered = true
 					break
 				}
@@ -367,7 +380,7 @@ func (o *NewAppOptions) RunNewApp() error {
 			} else {
 				fmt.Fprintf(out, "%[1]sUse '%[3]s start-build %[2]s' to start a build.\n", indent, t.Name, o.BaseName)
 			}
-		case *imageapi.ImageStream:
+		case *imagev1.ImageStream:
 			if len(t.Status.DockerImageRepository) == 0 {
 				if hasMissingRepo {
 					continue
@@ -375,7 +388,7 @@ func (o *NewAppOptions) RunNewApp() error {
 				hasMissingRepo = true
 				fmt.Fprintf(out, "%sWARNING: No Docker registry has been configured with the server. Automatic builds and deployments may not function.\n", indent)
 			}
-		case *routeapi.Route:
+		case *routev1.Route:
 			containsRoute = true
 			if len(t.Spec.Host) > 0 {
 				var route *routeapi.Route
@@ -423,18 +436,29 @@ func (o *NewAppOptions) RunNewApp() error {
 	return nil
 }
 
-func getServices(items []runtime.Object) []*kapi.Service {
-	var svc []*kapi.Service
+func getServices(items []runtime.Object) []*corev1.Service {
+	var svc []*corev1.Service
 	for _, i := range items {
-		switch i.(type) {
-		case *kapi.Service:
-			svc = append(svc, i.(*kapi.Service))
+		unstructuredObj := i.(*unstructured.Unstructured)
+		obj, err := legacyscheme.Scheme.New(unstructuredObj.GroupVersionKind())
+		if err != nil {
+			glog.V(1).Info(err)
+			continue
+		}
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(unstructuredObj.Object, obj); err != nil {
+			glog.V(1).Info(err)
+			continue
+		}
+
+		switch obj.(type) {
+		case *corev1.Service:
+			svc = append(svc, obj.(*corev1.Service))
 		}
 	}
 	return svc
 }
 
-func followInstallation(config *newcmd.AppConfig, pod *kapi.Pod, logsForObjectFn polymorphichelpers.LogsForObjectFunc) error {
+func followInstallation(config *newcmd.AppConfig, pod *corev1.Pod, logsForObjectFn polymorphichelpers.LogsForObjectFunc) error {
 	fmt.Fprintf(config.Out, "--> Installing ...\n")
 
 	// we cannot retrieve logs until the pod is out of pending
