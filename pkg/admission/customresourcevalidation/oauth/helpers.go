@@ -21,13 +21,13 @@ func ValidateRemoteConnectionInfo(remoteConnectionInfo configv1.OAuthRemoteConne
 	if len(remoteConnectionInfo.URL) == 0 {
 		allErrs = append(allErrs, field.Required(fldPath.Child("url"), ""))
 	} else {
-		_, urlErrs := common.ValidateURL(remoteConnectionInfo.URL, fldPath.Child("url"))
+		_, urlErrs := common.ValidateSecureURL(remoteConnectionInfo.URL, fldPath.Child("url"))
 		allErrs = append(allErrs, urlErrs...)
 	}
 
 	allErrs = append(allErrs, crvalidation.ValidateConfigMapReference(fldPath.Child("ca"), remoteConnectionInfo.CA, false)...)
-	allErrs = append(allErrs, crvalidation.ValidateSecretReference(fldPath.Child("clientcert"), remoteConnectionInfo.TLSClientCert, false)...)
-	allErrs = append(allErrs, crvalidation.ValidateSecretReference(fldPath.Child("clientcert"), remoteConnectionInfo.TLSClientKey, false)...)
+	allErrs = append(allErrs, crvalidation.ValidateSecretReference(fldPath.Child("tlsClientCert"), remoteConnectionInfo.TLSClientCert, false)...)
+	allErrs = append(allErrs, crvalidation.ValidateSecretReference(fldPath.Child("tlsClientKey"), remoteConnectionInfo.TLSClientKey, false)...)
 
 	return allErrs
 }
