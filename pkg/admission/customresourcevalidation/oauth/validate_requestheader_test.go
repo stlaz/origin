@@ -55,31 +55,22 @@ func TestValidateRequestHeaderIdentityProvider(t *testing.T) {
 				provider: &configv1.RequestHeaderIdentityProvider{},
 			},
 			want: field.ErrorList{
+				field.Required(field.NewPath("ca", "name"), ""),
 				field.Required(field.NewPath("headers"), ""),
+				{Type: field.ErrorTypeRequired, Field: "", BadValue: "", Detail: "at least one of challengeURL or loginURL must be specified"},
 			},
 		},
 		{
 			name: "wrong ca refname",
 			args: args{
 				provider: &configv1.RequestHeaderIdentityProvider{
+					LoginURL: "http://oauth.coolpeoplecorp.com/login/authorize?${query}",
 					Headers:  []string{"X-Remote-User"},
 					ClientCA: configv1.ConfigMapNameReference{Name: "dat_badrefname"},
 				},
 			},
 			want: field.ErrorList{
-				field.Invalid(field.NewPath("clientCA", "name"), "dat_badrefname", wrongConfigMapSecretErrMsg),
-			},
-		},
-		{
-			name: "client cert names w/o client ca ref",
-			args: args{
-				provider: &configv1.RequestHeaderIdentityProvider{
-					Headers:           []string{"X-Remote-User"},
-					ClientCommonNames: []string{"red-team-proxy"},
-				},
-			},
-			want: field.ErrorList{
-				field.Invalid(field.NewPath("clientCommonNames"), []string{"red-team-proxy"}, "clientCA must be specified in order to use clientCommonNames"),
+				field.Invalid(field.NewPath("ca", "name"), "dat_badrefname", wrongConfigMapSecretErrMsg),
 			},
 		},
 		{
@@ -91,8 +82,8 @@ func TestValidateRequestHeaderIdentityProvider(t *testing.T) {
 				},
 			},
 			want: field.ErrorList{
+				field.Required(field.NewPath("ca", "name"), ""),
 				field.Invalid(field.NewPath("challengeURL"), "http://oauth.coolpeoplecorp.com/challenge-endpoint", "query does not include \"${url}\" or \"${query}\", redirect will not preserve original authorize parameters"),
-				field.Invalid(field.NewPath("clientCA"), "", "if no clientCA is set, no request verification is done, and any request directly against the OAuth server can impersonate any identity from this provider"),
 			},
 		},
 		{
@@ -142,8 +133,8 @@ func TestValidateRequestHeaderIdentityProvider(t *testing.T) {
 				},
 			},
 			want: field.ErrorList{
+				field.Required(field.NewPath("ca", "name"), ""),
 				field.Invalid(field.NewPath("loginURL"), "http://oauth.coolpeoplecorp.com/login-endpoint/authorize?${custom}", "query does not include \"${url}\" or \"${query}\", redirect will not preserve original authorize parameters"),
-				field.Invalid(field.NewPath("clientCA"), "", "if no clientCA is set, no request verification is done, and any request directly against the OAuth server can impersonate any identity from this provider"),
 			},
 		},
 		{

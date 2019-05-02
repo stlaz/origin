@@ -58,7 +58,7 @@ func TestValidateGoogleIdentityProvider(t *testing.T) {
 				mappingMethod: configv1.MappingMethodClaim,
 			},
 			want: field.ErrorList{
-				field.Invalid(field.NewPath("hostedDomain"), nil, "no hostedDomain specified, any Google user will be allowed to authenticate"),
+				field.Invalid(field.NewPath("hostedDomain"), nil, "hostedDomain must be specified unless lookup is used"),
 			},
 		},
 		{

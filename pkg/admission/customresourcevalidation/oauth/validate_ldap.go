@@ -31,17 +31,15 @@ func ValidateLDAPIdentityProvider(provider *configv1.LDAPIdentityProvider, fldPa
 }
 
 // TODO clean this up
-func validateLDAPClientConfig(url, bindDN, bindPassword, CA string, insecure bool, fldPath *field.Path) field.ErrorList {
+func validateLDAPClientConfig(url, bindDN, bindPasswordRef, CA string, insecure bool, fldPath *field.Path) field.ErrorList {
 	errs := field.ErrorList{}
 
 	// Make sure bindDN and bindPassword are both set, or both unset
 	// Both unset means an anonymous bind is used for search (https://tools.ietf.org/html/rfc4513#section-5.1.1)
 	// Both set means the name/password simple bind is used for search (https://tools.ietf.org/html/rfc4513#section-5.1.3)
-	if (len(bindDN) == 0) != (len(bindPassword) == 0) {
-		errs = append(errs, field.Invalid(fldPath.Child("bindDN"), bindDN,
-			"bindDN and bindPassword must both be specified, or both be empty"))
-		errs = append(errs, field.Invalid(fldPath.Child("bindPassword"), "(masked)",
-			"bindDN and bindPassword must both be specified, or both be empty"))
+	if (len(bindDN) == 0) != (len(bindPasswordRef) == 0) {
+		errs = append(errs, field.Invalid(fldPath.Child("bindDN"), bindDN, "bindDN and bindPassword must both be specified, or both be empty"))
+		errs = append(errs, field.Invalid(fldPath.Child("bindPassword").Child("name"), bindPasswordRef, "bindDN and bindPassword must both be specified, or both be empty"))
 	}
 
 	if len(url) == 0 {
@@ -57,12 +55,10 @@ func validateLDAPClientConfig(url, bindDN, bindPassword, CA string, insecure boo
 
 	if insecure {
 		if u.Scheme == ldaputil.SchemeLDAPS {
-			errs = append(errs, field.Invalid(fldPath.Child("url"), url,
-				fmt.Sprintf("Cannot use %s scheme with insecure=true", u.Scheme)))
+			errs = append(errs, field.Invalid(fldPath.Child("url"), url, fmt.Sprintf("Cannot use %s scheme with insecure=true", u.Scheme)))
 		}
 		if len(CA) > 0 {
-			errs = append(errs, field.Invalid(fldPath.Child("ca"), CA,
-				"Cannot specify a ca with insecure=true"))
+			errs = append(errs, field.Invalid(fldPath.Child("ca"), CA, "Cannot specify a ca with insecure=true"))
 		}
 	}
 

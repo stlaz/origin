@@ -180,7 +180,7 @@ func TestValidateGitHubIdentityProvider(t *testing.T) {
 				mappingMethod: "",
 			},
 			errors: field.ErrorList{
-				{Type: field.ErrorTypeInvalid, Field: "", BadValue: nil, Detail: "no organizations or teams specified, any GitHub user will be allowed to authenticate"},
+				{Type: field.ErrorTypeInvalid, Field: "", BadValue: nil, Detail: "one of organizations or teams must be specified unless hostname is set or lookup is used"},
 			},
 		},
 		{

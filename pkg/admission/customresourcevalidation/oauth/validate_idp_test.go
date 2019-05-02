@@ -74,7 +74,7 @@ func TestValidateOAuthSpec(t *testing.T) {
 				},
 			},
 			want: field.ErrorList{
-				field.Forbidden(field.NewPath("spec", "identityProviders"), "only one identity provider can redirect clients requesting an authentication challenge, found: sso1, sso2"),
+				field.Invalid(field.NewPath("spec", "identityProviders"), "<omitted>", "only one identity provider can redirect clients requesting an authentication challenge, found: sso1, sso2"),
 			},
 		},
 		{
@@ -94,7 +94,7 @@ func TestValidateOAuthSpec(t *testing.T) {
 				},
 			},
 			want: field.ErrorList{
-				field.Forbidden(field.NewPath("spec", "identityProviders"), "cannot mix providers that redirect clients requesting auth challenges (sso) with providers issuing challenges to those clients (ldap)"),
+				field.Invalid(field.NewPath("spec", "identityProviders"), "<omitted>", "cannot mix providers that redirect clients requesting auth challenges (sso) with providers issuing challenges to those clients (ldap)"),
 			},
 		},
 		{

@@ -45,8 +45,7 @@ func ValidateOpenIDIdentityProvider(provider *configv1.OpenIDIdentityProvider, f
 			case ch >= '#' && ch <= '[':
 			case ch >= ']' && ch <= '~':
 			default:
-				allErrs = append(allErrs,
-					field.Invalid(fieldPath.Child("extraScopes").Index(i), scope, fmt.Sprintf("cannot contain %v", ch)))
+				allErrs = append(allErrs, field.Invalid(fieldPath.Child("extraScopes").Index(i), scope, fmt.Sprintf("cannot contain %v", ch)))
 			}
 		}
 	}

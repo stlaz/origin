@@ -46,11 +46,8 @@ func ValidateRequestHeaderIdentityProvider(provider *configv1.RequestHeaderIdent
 		if len(urlErrs) == 0 {
 			if !hasParamToken(u) {
 				errs = append(errs,
-					field.Invalid(
-						field.NewPath("challengeURL"),
-						provider.ChallengeURL,
-						fmt.Sprintf("query does not include %q or %q, redirect will not preserve original authorize parameters", urlToken, queryToken),
-					),
+					field.Invalid(field.NewPath("challengeURL"), provider.ChallengeURL,
+						fmt.Sprintf("query does not include %q or %q, redirect will not preserve original authorize parameters", urlToken, queryToken)),
 				)
 			}
 		}
@@ -62,9 +59,7 @@ func ValidateRequestHeaderIdentityProvider(provider *configv1.RequestHeaderIdent
 		if len(urlErrs) == 0 {
 			if !hasParamToken(u) {
 				errs = append(errs,
-					field.Invalid(
-						fieldPath.Child("loginURL"),
-						provider.LoginURL,
+					field.Invalid(fieldPath.Child("loginURL"), provider.LoginURL,
 						fmt.Sprintf("query does not include %q or %q, redirect will not preserve original authorize parameters", urlToken, queryToken),
 					),
 				)

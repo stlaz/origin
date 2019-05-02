@@ -50,15 +50,32 @@ func TestValidateLDAPIdentityProvider(t *testing.T) {
 				},
 			},
 			want: field.ErrorList{
+				field.Invalid(field.NewPath("bindDN"), "", "bindDN and bindPassword must both be specified, or both be empty"),
+				field.Invalid(field.NewPath("bindPassword", "name"), "bad_refname", "bindDN and bindPassword must both be specified, or both be empty"),
+				field.Required(field.NewPath("url"), ""),
 				field.Invalid(field.NewPath("bindPassword", "name"), "bad_refname", wrongConfigMapSecretErrMsg),
 				field.Invalid(field.NewPath("attributes", "id"), "[]", "at least one id attribute is required (LDAP standard identity attribute is 'dn')"),
+			},
+		},
+		{
+			name: "invalid url",
+			args: args{
+				provider: &configv1.LDAPIdentityProvider{
+					URL: "https://foo",
+					Attributes: configv1.LDAPAttributeMapping{
+						ID: []string{"uid"},
+					},
+				},
+			},
+			want: field.ErrorList{
+				field.Invalid(field.NewPath("url"), "https://foo", `invalid scheme "https"`),
 			},
 		},
 		{
 			name: "minimal passing provider",
 			args: args{
 				provider: &configv1.LDAPIdentityProvider{
-					BindPassword: configv1.SecretNameReference{Name: "fairly-secret"},
+					URL: "ldap://foo",
 					Attributes: configv1.LDAPAttributeMapping{
 						ID: []string{"uid"},
 					},

@@ -49,7 +49,20 @@ func TestValidateKeystoneIdentityProvider(t *testing.T) {
 			},
 			want: field.ErrorList{
 				field.Required(field.NewPath("url"), ""),
-				field.Invalid(field.NewPath("url"), "", "Auth URL should be secure and start with https"),
+			},
+		},
+		{
+			name: "http url",
+			args: args{
+				provider: &configv1.KeystoneIdentityProvider{
+					OAuthRemoteConnectionInfo: configv1.OAuthRemoteConnectionInfo{
+						URL: "http://foo",
+					},
+					DomainName: "production",
+				},
+			},
+			want: field.ErrorList{
+				field.Invalid(field.NewPath("url"), "http://foo", "must use https scheme"),
 			},
 		},
 		{
