@@ -16,7 +16,7 @@ func ValidateGoogleIdentityProvider(provider *configv1.GoogleIdentityProvider, m
 	errs = append(errs, ValidateOAuthIdentityProvider(provider.ClientID, provider.ClientSecret, fieldPath)...)
 
 	if len(provider.HostedDomain) == 0 && mappingMethod != configv1.MappingMethodLookup {
-		errs = append(errs, field.Invalid(fieldPath.Child("hostedDomain"), nil, "no hostedDomain specified, any Google user will be allowed to authenticate"))
+		errs = append(errs, field.Invalid(fieldPath.Child("hostedDomain"), nil, "hostedDomain must be specified unless lookup is used"))
 	}
 
 	return errs

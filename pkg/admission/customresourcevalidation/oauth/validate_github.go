@@ -25,10 +25,20 @@ func ValidateGitHubIdentityProvider(provider *configv1.GitHubIdentityProvider, m
 
 	// only check that there are some teams/orgs if not GitHub Enterprise Server
 	if len(provider.Hostname) == 0 && len(provider.Teams) == 0 && len(provider.Organizations) == 0 && mappingMethod != configv1.MappingMethodLookup {
-		errs = append(errs, field.Invalid(fieldPath, nil, "no organizations or teams specified, any GitHub user will be allowed to authenticate"))
+		errs = append(errs, field.Invalid(fieldPath, nil, "one of organizations or teams must be specified unless hostname is set or lookup is used"))
+	}
+	for i, organization := range provider.Organizations {
+		if strings.Contains(organization, "/") {
+			errs = append(errs, field.Invalid(fieldPath.Child("organizations").Index(i), organization, "cannot contain /"))
+		}
+		if len(organization) == 0 {
+			errs = append(errs, field.Required(fieldPath.Child("organizations").Index(i), "cannot be empty"))
+		}
 	}
 	for i, team := range provider.Teams {
-		if len(strings.Split(team, "/")) != 2 {
+		if split := strings.Split(team, "/"); len(split) != 2 {
+			errs = append(errs, field.Invalid(fieldPath.Child("teams").Index(i), team, "must be in the format <org>/<team>"))
+		} else if org, t := split[0], split[1]; len(org) == 0 || len(t) == 0 {
 			errs = append(errs, field.Invalid(fieldPath.Child("teams").Index(i), team, "must be in the format <org>/<team>"))
 		}
 	}
