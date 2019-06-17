@@ -1,6 +1,7 @@
 package util
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -11,7 +12,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
@@ -22,7 +22,10 @@ import (
 	legacyconfigv1 "github.com/openshift/api/legacyconfig/v1"
 	osinv1 "github.com/openshift/api/osin/v1"
 	configclient "github.com/openshift/client-go/config/clientset/versioned"
+	"github.com/openshift/library-go/pkg/config/helpers"
 	"github.com/openshift/library-go/pkg/crypto"
+
+	"github.com/openshift/origin/test/extended/testdata"
 )
 
 const (
@@ -32,7 +35,7 @@ const (
 	servingCertPathCert = "/var/config/system/secrets/serving-cert/tls.crt"
 	servingCertPathKey  = "/var/config/system/secrets/serving-cert/tls.key"
 
-	routerCertsDirPath = "/var/cofngi/system/secrets/router-certs"
+	routerCertsDirPath = "/var/config/system/secrets/router-certs"
 
 	sessionSecretDirPath = "/var/config/system/secrets/session-secret"
 	sessionSecretPath    = "/var/config/system/secrets/session-secret/session"
@@ -55,152 +58,6 @@ var (
 
 	defaultProcMount         = corev1.DefaultProcMount
 	volumesDefaultMode int32 = 420
-
-	oauthBasePod = &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Labels: map[string]string{
-				"app": "test-oauth-server",
-			},
-			Name: "test-oauth-server",
-		},
-		Spec: corev1.PodSpec{
-			ServiceAccountName: SAName,
-			Containers: []corev1.Container{
-				{
-					Name:  "oauth-server",
-					Image: "quay.io/openshift/origin-hypershift:latest", // FIXME: get the actual image from the mapping in "openshift-authentication-operator" NS
-					Command: []string{
-						"hypershift",
-						"openshift-osinserver",
-						"--config=/var/config/system/configmaps/oauth-config/oauth.conf",
-						"--v=100",
-					},
-					Ports: []corev1.ContainerPort{
-						{
-							Name:          "https",
-							ContainerPort: 6443,
-							Protocol:      corev1.ProtocolTCP,
-						},
-					},
-					ImagePullPolicy: corev1.PullIfNotPresent,
-					SecurityContext: &corev1.SecurityContext{
-						Capabilities: &corev1.Capabilities{
-							Drop: []corev1.Capability{"MKNOD"},
-						},
-						ProcMount: &defaultProcMount,
-					},
-					VolumeMounts: []corev1.VolumeMount{
-						{
-							Name:      "session-secret",
-							MountPath: sessionSecretDirPath,
-							ReadOnly:  true,
-						},
-						{
-							Name:      "oauth-config",
-							MountPath: oauthConfigPath,
-							ReadOnly:  true,
-						},
-						{
-							Name:      "serving-cert",
-							MountPath: servingCertDirPath,
-							ReadOnly:  true,
-						},
-						{
-							Name:      "router-certs",
-							MountPath: routerCertsDirPath,
-							ReadOnly:  true,
-						},
-						{
-							Name:      "service-ca",
-							MountPath: serviceCADirPath,
-							ReadOnly:  true,
-						},
-					},
-					Resources: corev1.ResourceRequirements{
-						Requests: corev1.ResourceList{
-							"cpu":    resource.MustParse("10m"),
-							"memory": resource.MustParse("50Mi"),
-						},
-					},
-				},
-			},
-			Volumes: []corev1.Volume{
-				{
-					Name: "oauth-config",
-					VolumeSource: corev1.VolumeSource{
-						ConfigMap: &corev1.ConfigMapVolumeSource{
-							LocalObjectReference: corev1.LocalObjectReference{Name: "oauth-config"},
-							DefaultMode:          &volumesDefaultMode,
-							Items: []corev1.KeyToPath{
-								{
-									Key:  "oauth.conf",
-									Path: "oauth.conf",
-								},
-							},
-						},
-					},
-				},
-				{
-					Name: "session-secret",
-					VolumeSource: corev1.VolumeSource{
-						Secret: &corev1.SecretVolumeSource{
-							SecretName:  "session-secret",
-							DefaultMode: &volumesDefaultMode,
-							Items: []corev1.KeyToPath{
-								{
-									Key:  "session",
-									Path: "session",
-								},
-							},
-						},
-					},
-				},
-				{
-					Name: "serving-cert",
-					VolumeSource: corev1.VolumeSource{
-						Secret: &corev1.SecretVolumeSource{
-							SecretName:  "serving-cert",
-							DefaultMode: &volumesDefaultMode,
-							Items: []corev1.KeyToPath{
-								{
-									Key:  "tls.crt",
-									Path: "tls.crt",
-								},
-								{
-									Key:  "tls.key",
-									Path: "tls.key",
-								},
-							},
-						},
-					},
-				},
-				{
-					Name: "router-certs",
-					VolumeSource: corev1.VolumeSource{
-						Secret: &corev1.SecretVolumeSource{
-							SecretName:  "router-certs",
-							DefaultMode: &volumesDefaultMode,
-						},
-					},
-				},
-				{
-					Name: "service-ca",
-					VolumeSource: corev1.VolumeSource{
-						ConfigMap: &corev1.ConfigMapVolumeSource{
-							LocalObjectReference: corev1.LocalObjectReference{Name: "service-ca"},
-							DefaultMode:          &volumesDefaultMode,
-							Items: []corev1.KeyToPath{
-								{
-									Key:  "service-ca.crt",
-									Path: "service-ca.crt",
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
 )
 
 func init() {
@@ -297,7 +154,11 @@ func DeployOAuthServer(oc *CLI, idps []osinv1.IdentityProvider, configMaps []cor
 	}
 
 	// finally create the oauth server, wait till it starts running
-	if _, err := coreClient.Pods(oc.Namespace()).Create(oauthServerPod(configMaps, secrets)); err != nil {
+	oauthServerPod, err := oauthServerPod(configMaps, secrets)
+	if err != nil {
+		return "", cleanups, err
+	}
+	if _, err := coreClient.Pods(oc.Namespace()).Create(oauthServerPod); err != nil {
 		return "", cleanups, err
 	}
 
@@ -315,8 +176,19 @@ func DeployOAuthServer(oc *CLI, idps []osinv1.IdentityProvider, configMaps []cor
 	return routeURL, cleanups, nil
 }
 
-func oauthServerPod(configMaps []corev1.ConfigMap, secrets []corev1.Secret) *corev1.Pod {
-	oauthServerPod := oauthBasePod.DeepCopy()
+func oauthServerPod(configMaps []corev1.ConfigMap, secrets []corev1.Secret) (*corev1.Pod, error) {
+	oauthServerAsset := testdata.MustAsset("test/extended/testdata/oauthserver/oauth-pod.yaml")
+
+	obj, err := helpers.ReadYAML(bytes.NewBuffer(oauthServerAsset), corev1.AddToScheme)
+	if err != nil {
+		return nil, err
+	}
+
+	oauthServerPod, ok := obj.(*corev1.Pod)
+	if ok != true {
+		return nil, err
+	}
+
 	volumes := oauthServerPod.Spec.Volumes
 	volumeMounts := oauthServerPod.Spec.Containers[0].VolumeMounts
 
@@ -331,7 +203,7 @@ func oauthServerPod(configMaps []corev1.ConfigMap, secrets []corev1.Secret) *cor
 	oauthServerPod.Spec.Volumes = volumes
 	oauthServerPod.Spec.Containers[0].VolumeMounts = volumeMounts
 
-	return oauthServerPod
+	return oauthServerPod, nil
 }
 
 func addCMMount(volumes []corev1.Volume, volumeMounts []corev1.VolumeMount, cm *corev1.ConfigMap) ([]corev1.Volume, []corev1.VolumeMount) {

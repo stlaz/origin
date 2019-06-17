@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"io/ioutil"
 	"net/http"
+	"time"
 
 	g "github.com/onsi/ginkgo"
 	o "github.com/onsi/gomega"
@@ -78,6 +79,7 @@ var _ = g.Describe("[Suite:openshift/oauth/run-oauth-server] Run the integrated 
 		o.Expect(err).ToNot(o.HaveOccurred())
 		defer resp.Body.Close()
 
+		time.Sleep(2 * time.Minute)
 		body, err := ioutil.ReadAll(resp.Body)
 		e2e.Logf("The body received: %s", string(body))
 		o.Expect(err).ToNot(o.HaveOccurred())

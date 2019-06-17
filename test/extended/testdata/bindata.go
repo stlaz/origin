@@ -184,6 +184,7 @@
 // test/extended/testdata/multi-namespace-pipeline.yaml
 // test/extended/testdata/multi-namespace-template.yaml
 // test/extended/testdata/oauthserver/cabundle-cm.yaml
+// test/extended/testdata/oauthserver/oauth-pod.yaml
 // test/extended/testdata/oauthserver/oauth-sa.yaml
 // test/extended/testdata/oauthserver/oauth-server.yaml
 // test/extended/testdata/oauthserver/session-secret.yaml
@@ -10533,6 +10534,105 @@ func testExtendedTestdataOauthserverCabundleCmYaml() (*asset, error) {
 	}
 
 	info := bindataFileInfo{name: "test/extended/testdata/oauthserver/cabundle-cm.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
+}
+
+var _testExtendedTestdataOauthserverOauthPodYaml = []byte(`apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: test-oauth-server
+  name: test-oauth-server
+spec:
+  containers:
+  - command:
+    - hypershift
+    - openshift-osinserver
+    - --config=/var/config/system/configmaps/oauth-config/oauth.conf
+    - --v=100
+    image: quay.io/openshift/origin-hypershift:latest
+    imagePullPolicy: IfNotPresent
+    name: oauth-server
+    ports:
+    - containerPort: 6443
+      name: https
+      protocol: TCP
+    resources:
+      requests:
+        cpu: 10m
+        memory: 50Mi
+    securityContext:
+      capabilities:
+        drop:
+        - MKNOD
+      procMount: Default
+    volumeMounts:
+    - mountPath: /var/config/system/secrets/session-secret
+      name: session-secret
+      readOnly: true
+    - mountPath: /var/config/system/configmaps/oauth-config
+      name: oauth-config
+      readOnly: true
+    - mountPath: /var/config/system/secrets/serving-cert
+      name: serving-cert
+      readOnly: true
+    - mountPath: /var/config/system/secrets/router-certs
+      name: router-certs
+      readOnly: true
+    - mountPath: /var/config/system/configmaps/service-ca
+      name: service-ca
+      readOnly: true
+  serviceAccountName: e2e-oauth
+  volumes:
+  - configMap:
+      defaultMode: 420
+      items:
+      - key: oauth.conf
+        path: oauth.conf
+      name: oauth-config
+    name: oauth-config
+  - name: session-secret
+    secret:
+      defaultMode: 420
+      items:
+      - key: session
+        path: session
+      secretName: session-secret
+  - name: serving-cert
+    secret:
+      defaultMode: 420
+      items:
+      - key: tls.crt
+        path: tls.crt
+      - key: tls.key
+        path: tls.key
+      secretName: serving-cert
+  - name: router-certs
+    secret:
+      defaultMode: 420
+      secretName: router-certs
+  - configMap:
+      defaultMode: 420
+      items:
+      - key: service-ca.crt
+        path: service-ca.crt
+      name: service-ca
+    name: service-ca
+
+`)
+
+func testExtendedTestdataOauthserverOauthPodYamlBytes() ([]byte, error) {
+	return _testExtendedTestdataOauthserverOauthPodYaml, nil
+}
+
+func testExtendedTestdataOauthserverOauthPodYaml() (*asset, error) {
+	bytes, err := testExtendedTestdataOauthserverOauthPodYamlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "test/extended/testdata/oauthserver/oauth-pod.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
 	a := &asset{bytes: bytes, info: info}
 	return a, nil
 }
@@ -32934,6 +33034,7 @@ var _bindata = map[string]func() (*asset, error){
 	"test/extended/testdata/multi-namespace-pipeline.yaml": testExtendedTestdataMultiNamespacePipelineYaml,
 	"test/extended/testdata/multi-namespace-template.yaml": testExtendedTestdataMultiNamespaceTemplateYaml,
 	"test/extended/testdata/oauthserver/cabundle-cm.yaml": testExtendedTestdataOauthserverCabundleCmYaml,
+	"test/extended/testdata/oauthserver/oauth-pod.yaml": testExtendedTestdataOauthserverOauthPodYaml,
 	"test/extended/testdata/oauthserver/oauth-sa.yaml": testExtendedTestdataOauthserverOauthSaYaml,
 	"test/extended/testdata/oauthserver/oauth-server.yaml": testExtendedTestdataOauthserverOauthServerYaml,
 	"test/extended/testdata/oauthserver/session-secret.yaml": testExtendedTestdataOauthserverSessionSecretYaml,
@@ -33432,6 +33533,7 @@ var _bintree = &bintree{nil, map[string]*bintree{
 				"multi-namespace-template.yaml": &bintree{testExtendedTestdataMultiNamespaceTemplateYaml, map[string]*bintree{}},
 				"oauthserver": &bintree{nil, map[string]*bintree{
 					"cabundle-cm.yaml": &bintree{testExtendedTestdataOauthserverCabundleCmYaml, map[string]*bintree{}},
+					"oauth-pod.yaml": &bintree{testExtendedTestdataOauthserverOauthPodYaml, map[string]*bintree{}},
 					"oauth-sa.yaml": &bintree{testExtendedTestdataOauthserverOauthSaYaml, map[string]*bintree{}},
 					"oauth-server.yaml": &bintree{testExtendedTestdataOauthserverOauthServerYaml, map[string]*bintree{}},
 					"session-secret.yaml": &bintree{testExtendedTestdataOauthserverSessionSecretYaml, map[string]*bintree{}},
