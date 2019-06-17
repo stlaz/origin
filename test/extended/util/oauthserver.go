@@ -28,13 +28,17 @@ import (
 const (
 	serviceURLFmt = "https://test-oauth-svc.%s.svc" // fill in the namespace
 
-	servingCertDirPath   = "/var/config/system/secrets/serving-cert"
-	servingCertPathCert  = "/var/config/system/secrets/serving-cert/tls.crt"
-	servingCertPathKey   = "/var/config/system/secrets/serving-cert/tls.key"
+	servingCertDirPath  = "/var/config/system/secrets/serving-cert"
+	servingCertPathCert = "/var/config/system/secrets/serving-cert/tls.crt"
+	servingCertPathKey  = "/var/config/system/secrets/serving-cert/tls.key"
+
+	routerCertsDirPath = "/var/cofngi/system/secrets/router-certs"
+
 	sessionSecretDirPath = "/var/config/system/secrets/session-secret"
 	sessionSecretPath    = "/var/config/system/secrets/session-secret/session"
-	oauthConfigPath      = "/var/config/system/configmaps/oauth-config"
-	serviceCADirPath     = "/var/config/system/configmaps/service-ca"
+
+	oauthConfigPath  = "/var/config/system/configmaps/oauth-config"
+	serviceCADirPath = "/var/config/system/configmaps/service-ca"
 
 	configObjectsDir = "/var/oauth/configobjects/"
 
@@ -102,6 +106,11 @@ var (
 							ReadOnly:  true,
 						},
 						{
+							Name:      "router-certs",
+							MountPath: routerCertsDirPath,
+							ReadOnly:  true,
+						},
+						{
 							Name:      "service-ca",
 							MountPath: serviceCADirPath,
 							ReadOnly:  true,
@@ -162,6 +171,15 @@ var (
 									Path: "tls.key",
 								},
 							},
+						},
+					},
+				},
+				{
+					Name: "router-certs",
+					VolumeSource: corev1.VolumeSource{
+						Secret: &corev1.SecretVolumeSource{
+							SecretName:  "router-certs",
+							DefaultMode: &volumesDefaultMode,
 						},
 					},
 				},
@@ -380,6 +398,11 @@ func oauthServerConfig(oc *CLI, routeURL string, idps []osinv1.IdentityProvider)
 		return nil, err
 	}
 
+	namedRouterCerts, err := routerCertsToSNIConfig(oc)
+	if err != nil {
+		return nil, err
+	}
+
 	return &osinv1.OsinServerConfig{
 		GenericAPIServerConfig: configv1.GenericAPIServerConfig{
 			ServingInfo: configv1.HTTPServingInfo{
@@ -392,10 +415,10 @@ func oauthServerConfig(oc *CLI, routeURL string, idps []osinv1.IdentityProvider)
 						CertFile: servingCertPathCert,
 						KeyFile:  servingCertPathKey,
 					},
-					ClientCA: "", // I think this can be left unset
-					// NamedCertificates: routerSecretToSNI(routerSecret), <--- might be necessary for request headers IdP
-					MinTLSVersion: crypto.TLSVersionToNameOrDie(crypto.DefaultTLSVersion()),
-					CipherSuites:  crypto.CipherSuitesToNamesOrDie(crypto.DefaultCiphers()),
+					ClientCA:          "", // I think this can be left unset
+					NamedCertificates: namedRouterCerts,
+					MinTLSVersion:     crypto.TLSVersionToNameOrDie(crypto.DefaultTLSVersion()),
+					CipherSuites:      crypto.CipherSuitesToNamesOrDie(crypto.DefaultCiphers()),
 				},
 				MaxRequestsInFlight:   1000,   // TODO this is a made up number
 				RequestTimeoutSeconds: 5 * 60, // 5 minutes
@@ -436,6 +459,31 @@ func oauthServerConfig(oc *CLI, routeURL string, idps []osinv1.IdentityProvider)
 			//  Templates: templates, TODO: we might eventually want this
 		},
 	}, nil
+}
+
+func routerCertsToSNIConfig(oc *CLI) ([]configv1.NamedCertificate, error) {
+	routerSecret, err := oc.AdminKubeClient().CoreV1().Secrets("openshift-config-managed").Get("router-certs", metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	localRouterSecret := routerSecret.DeepCopy()
+	localRouterSecret.ResourceVersion = ""
+	localRouterSecret.Namespace = oc.Namespace()
+	if _, err := oc.AdminKubeClient().CoreV1().Secrets(oc.Namespace()).Create(localRouterSecret); err != nil {
+		return nil, err
+	}
+
+	var out []configv1.NamedCertificate
+	for domain := range localRouterSecret.Data {
+		out = append(out, configv1.NamedCertificate{
+			Names: []string{"*." + domain}, // ingress domain is always a wildcard
+			CertInfo: configv1.CertInfo{ // the cert and key are appended together
+				CertFile: routerCertsDirPath + "/" + domain,
+				KeyFile:  routerCertsDirPath + "/" + domain,
+			},
+		})
+	}
+	return out, nil
 }
 
 func randomSessionSecret() (*corev1.Secret, error) {
