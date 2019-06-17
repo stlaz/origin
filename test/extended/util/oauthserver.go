@@ -1,7 +1,11 @@
 package util
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"math/rand"
 	"path"
 	"time"
 
@@ -15,6 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 
 	configv1 "github.com/openshift/api/config/v1"
+	legacyconfigv1 "github.com/openshift/api/legacyconfig/v1"
 	osinv1 "github.com/openshift/api/osin/v1"
 	configclient "github.com/openshift/client-go/config/clientset/versioned"
 	"github.com/openshift/library-go/pkg/crypto"
@@ -219,8 +224,7 @@ func DeployOAuthServer(oc *CLI, idps []osinv1.IdentityProvider, configMaps []cor
 		return "", cleanups, err
 	}
 
-	// FIXME: autogenerate the session secret
-	for _, res := range []string{"session-secret.yaml", "cabundle-cm.yaml", "oauth-server.yaml"} {
+	for _, res := range []string{"cabundle-cm.yaml", "oauth-server.yaml"} {
 		if err := oc.AsAdmin().Run("create").Args("-f", path.Join(oauthServerDataDir, res)).Execute(); err != nil {
 			return "", cleanups, err
 		}
@@ -241,6 +245,15 @@ func DeployOAuthServer(oc *CLI, idps []osinv1.IdentityProvider, configMaps []cor
 		if _, err := secretsClient.Create(&secret); err != nil {
 			return "", cleanups, err
 		}
+	}
+
+	// generate a session secret for the oauth server
+	sessionSecret, err := randomSessionSecret()
+	if err != nil {
+		return "", cleanups, err
+	}
+	if _, err := secretsClient.Create(sessionSecret); err != nil {
+		return "", cleanups, err
 	}
 
 	// get the route of the future OAuth server
@@ -423,6 +436,60 @@ func oauthServerConfig(oc *CLI, routeURL string, idps []osinv1.IdentityProvider)
 			//  Templates: templates, TODO: we might eventually want this
 		},
 	}, nil
+}
+
+func randomSessionSecret() (*corev1.Secret, error) {
+	skey, err := newSessionSecretsJSON()
+	if err != nil {
+		return nil, err
+	}
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "session-secret",
+			Labels: map[string]string{
+				"app": "test-oauth-server",
+			},
+		},
+		Data: map[string][]byte{
+			"session": skey,
+		},
+	}, nil
+}
+
+// this is less random than the actual secret generated in cluster-authentication-operator
+func newSessionSecretsJSON() ([]byte, error) {
+	const (
+		sha256KeyLenBytes = sha256.BlockSize // max key size with HMAC SHA256
+		aes256KeyLenBytes = 32               // max key size with AES (AES-256)
+	)
+
+	secrets := &legacyconfigv1.SessionSecrets{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "SessionSecrets",
+			APIVersion: "v1",
+		},
+		Secrets: []legacyconfigv1.SessionSecret{
+			{
+				Authentication: randomString(sha256KeyLenBytes), // 64 chars
+				Encryption:     randomString(aes256KeyLenBytes), // 32 chars
+			},
+		},
+	}
+	secretsBytes, err := json.Marshal(secrets)
+	if err != nil {
+		return nil, fmt.Errorf("error marshalling the session secret: %v", err) // should never happen
+	}
+
+	return secretsBytes, nil
+}
+
+//randomString - random string of A-Z chars with len size
+func randomString(size int) string {
+	bytes := make([]byte, size)
+	for i := 0; i < size; i++ {
+		bytes[i] = byte(65 + rand.Intn(25))
+	}
+	return base64.RawURLEncoding.EncodeToString(bytes)
 }
 
 func encode(obj runtime.Object) []byte {
