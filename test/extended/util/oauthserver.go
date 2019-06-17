@@ -13,6 +13,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -153,8 +154,13 @@ func DeployOAuthServer(oc *CLI, idps []osinv1.IdentityProvider, configMaps []cor
 		return "", cleanups, err
 	}
 
+	image, err := getImage(oc)
+	if err != nil {
+		return "", cleanups, err
+	}
+
 	// finally create the oauth server, wait till it starts running
-	oauthServerPod, err := oauthServerPod(configMaps, secrets)
+	oauthServerPod, err := oauthServerPod(configMaps, secrets, image)
 	if err != nil {
 		return "", cleanups, err
 	}
@@ -176,7 +182,7 @@ func DeployOAuthServer(oc *CLI, idps []osinv1.IdentityProvider, configMaps []cor
 	return routeURL, cleanups, nil
 }
 
-func oauthServerPod(configMaps []corev1.ConfigMap, secrets []corev1.Secret) (*corev1.Pod, error) {
+func oauthServerPod(configMaps []corev1.ConfigMap, secrets []corev1.Secret, image string) (*corev1.Pod, error) {
 	oauthServerAsset := testdata.MustAsset("test/extended/testdata/oauthserver/oauth-pod.yaml")
 
 	obj, err := helpers.ReadYAML(bytes.NewBuffer(oauthServerAsset), corev1.AddToScheme)
@@ -202,6 +208,7 @@ func oauthServerPod(configMaps []corev1.ConfigMap, secrets []corev1.Secret) (*co
 
 	oauthServerPod.Spec.Volumes = volumes
 	oauthServerPod.Spec.Containers[0].VolumeMounts = volumeMounts
+	oauthServerPod.Spec.Containers[0].Image = image
 
 	return oauthServerPod, nil
 }
@@ -418,4 +425,14 @@ func encode(obj runtime.Object) []byte {
 		return nil
 	}
 	return bytes
+}
+
+// getImage will grab the hypershift image version from openshift-authentication ns
+func getImage(oc *CLI) (string, error) {
+	selector, _ := labels.Parse("app=oauth-openshift")
+	pods, err := oc.AdminKubeClient().CoreV1().Pods("openshift-authentication").List(metav1.ListOptions{LabelSelector: selector.String()})
+	if err != nil {
+		return "", err
+	}
+	return pods.Items[0].Spec.Containers[0].Image, nil
 }

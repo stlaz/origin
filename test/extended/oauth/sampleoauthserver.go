@@ -1,7 +1,6 @@
 package oauth
 
 import (
-	"crypto/tls"
 	"io/ioutil"
 	"net/http"
 	"time"
@@ -9,6 +8,7 @@ import (
 	g "github.com/onsi/ginkgo"
 	o "github.com/onsi/gomega"
 
+	"k8s.io/client-go/rest"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -74,7 +74,9 @@ var _ = g.Describe("[Suite:openshift/oauth/run-oauth-server] Run the integrated 
 		o.Expect(err).ToNot(o.HaveOccurred())
 		e2e.Logf("got the OAuth server address: %s", serverAddress)
 
-		http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // FIXME: VERY VERY UGLY, don't do this at home
+		tlsClientConfig, err := rest.TLSConfigFor(oc.AdminConfig())
+		o.Expect(err).NotTo(o.HaveOccurred())
+		http.DefaultTransport.(*http.Transport).TLSClientConfig = tlsClientConfig
 		resp, err := http.Get(serverAddress)
 		o.Expect(err).ToNot(o.HaveOccurred())
 		defer resp.Body.Close()
