@@ -1,11 +1,6 @@
 package oauth
 
 import (
-	"crypto/tls"
-	"io/ioutil"
-	"net/http"
-	"time"
-
 	g "github.com/onsi/ginkgo"
 	o "github.com/onsi/gomega"
 
@@ -36,22 +31,6 @@ var _ = g.Describe("[Suite:openshift/oauth/run-oauth-server] Run the integrated 
 		oc = exutil.NewCLI("oauth-server-configure", exutil.KubeConfigPath())
 	)
 
-	// g.It("should successfully be configured and be responsive", func() {
-	// 	serverAddress, cleanup, err := exutil.DeployOAuthServer(oc, []osinv1.IdentityProvider{}, nil, nil)
-	// 	defer cleanup()
-	// 	o.Expect(err).ToNot(o.HaveOccurred())
-	// 	e2e.Logf("got the OAuth server address: %s", serverAddress)
-
-	// 	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // FIXME: VERY VERY UGLY, don't do this at home
-	// 	resp, err := http.Get(serverAddress)
-	// 	o.Expect(err).ToNot(o.HaveOccurred())
-	// 	defer resp.Body.Close()
-
-	// 	body, err := ioutil.ReadAll(resp.Body)
-	// 	e2e.Logf("The body received: %s", string(body))
-	// 	o.Expect(err).ToNot(o.HaveOccurred())
-	// })
-
 	g.It("should successfully be configured and be responsive", func() {
 		secrets := []corev1.Secret{{
 			ObjectMeta: metav1.ObjectMeta{
@@ -73,16 +52,6 @@ var _ = g.Describe("[Suite:openshift/oauth/run-oauth-server] Run the integrated 
 		defer cleanup()
 		o.Expect(err).ToNot(o.HaveOccurred())
 		e2e.Logf("got the OAuth server address: %s", serverAddress)
-
-		http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // FIXME: VERY VERY UGLY, don't do this at home
-		resp, err := http.Get(serverAddress)
-		o.Expect(err).ToNot(o.HaveOccurred())
-		defer resp.Body.Close()
-
-		time.Sleep(2 * time.Minute)
-		body, err := ioutil.ReadAll(resp.Body)
-		e2e.Logf("The body received: %s", string(body))
-		o.Expect(err).ToNot(o.HaveOccurred())
 	})
 })
 
