@@ -10,6 +10,8 @@ import (
 	"path"
 	"time"
 
+	"github.com/RangelReale/osincli"
+
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -18,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
+	restclient "k8s.io/client-go/rest"
 
 	configv1 "github.com/openshift/api/config/v1"
 	legacyconfigv1 "github.com/openshift/api/legacyconfig/v1"
@@ -25,7 +28,7 @@ import (
 	configclient "github.com/openshift/client-go/config/clientset/versioned"
 	"github.com/openshift/library-go/pkg/config/helpers"
 	"github.com/openshift/library-go/pkg/crypto"
-
+	"github.com/openshift/oc/pkg/helpers/tokencmd"
 	"github.com/openshift/origin/test/extended/testdata"
 )
 
@@ -65,17 +68,27 @@ func init() {
 	utilruntime.Must(osinv1.Install(osinScheme))
 }
 
+func RequestTokenForUser(reqOpts *tokencmd.RequestTokenOptions, username, password string) (string, error) {
+	reqOpts.Handler = &tokencmd.BasicChallengeHandler{
+		Host:     reqOpts.ClientConfig.Host,
+		Username: username,
+		Password: password,
+	}
+
+	return reqOpts.RequestToken()
+}
+
 // DeployOAuthServer - deployes an instance of an OpenShift OAuth server
 // very simplified for now
 // returns OAuth server url, cleanup function, error
-func DeployOAuthServer(oc *CLI, idps []osinv1.IdentityProvider, configMaps []corev1.ConfigMap, secrets []corev1.Secret) (string, func(), error) {
+func DeployOAuthServer(oc *CLI, idps []osinv1.IdentityProvider, configMaps []corev1.ConfigMap, secrets []corev1.Secret) (*tokencmd.RequestTokenOptions, func(), error) {
 	oauthServerDataDir := FixturePath("testdata", "oauthserver")
 	cleanups := func() {
 		oc.AsAdmin().Run("delete").Args("clusterrolebinding", oc.Namespace()).Execute()
 	}
 
 	if err := oc.AsAdmin().Run("create").Args("-f", path.Join(oauthServerDataDir, "oauth-sa.yaml")).Execute(); err != nil {
-		return "", cleanups, err
+		return nil, cleanups, err
 	}
 
 	// the oauth server needs access to kube-system configmaps/extension-apiserver-authentication
@@ -86,7 +99,7 @@ func DeployOAuthServer(oc *CLI, idps []osinv1.IdentityProvider, configMaps []cor
 		RoleRef: rbacv1.RoleRef{
 			APIGroup: rbacv1.GroupName,
 			Kind:     "ClusterRole",
-			Name:     "cluster-admin", // FIXME: Nope!
+			Name:     "cluster-admin", // TODO: Do we need that?
 		},
 		Subjects: []rbacv1.Subject{
 			{
@@ -97,12 +110,12 @@ func DeployOAuthServer(oc *CLI, idps []osinv1.IdentityProvider, configMaps []cor
 		},
 	}
 	if _, err := oc.AdminKubeClient().RbacV1().ClusterRoleBindings().Create(oauthSARolebinding); err != nil {
-		return "", cleanups, err
+		return nil, cleanups, err
 	}
 
 	for _, res := range []string{"cabundle-cm.yaml", "oauth-server.yaml"} {
 		if err := oc.AsAdmin().Run("create").Args("-f", path.Join(oauthServerDataDir, res)).Execute(); err != nil {
-			return "", cleanups, err
+			return nil, cleanups, err
 		}
 	}
 
@@ -113,59 +126,59 @@ func DeployOAuthServer(oc *CLI, idps []osinv1.IdentityProvider, configMaps []cor
 
 	for _, cm := range configMaps {
 		if _, err := cmClient.Create(&cm); err != nil {
-			return "", cleanups, err
+			return nil, cleanups, err
 		}
 	}
 
 	for _, secret := range secrets {
 		if _, err := secretsClient.Create(&secret); err != nil {
-			return "", cleanups, err
+			return nil, cleanups, err
 		}
 	}
 
 	// generate a session secret for the oauth server
 	sessionSecret, err := randomSessionSecret()
 	if err != nil {
-		return "", cleanups, err
+		return nil, cleanups, err
 	}
 	if _, err := secretsClient.Create(sessionSecret); err != nil {
-		return "", cleanups, err
+		return nil, cleanups, err
 	}
 
 	// get the route of the future OAuth server
 	route, err := oc.AdminRouteClient().RouteV1().Routes(oc.Namespace()).Get(RouteName, metav1.GetOptions{})
 	if err != nil {
-		return "", cleanups, err
+		return nil, cleanups, err
 	}
 	routeURL := fmt.Sprintf("https://%s", route.Spec.Host)
 
 	// prepare the config, inject it with the route URL and the IdP config we got
 	config, err := oauthServerConfig(oc, routeURL, idps)
 	if err != nil {
-		return "", cleanups, err
+		return nil, cleanups, err
 	}
 
 	configBytes := encode(config)
 	if configBytes == nil {
-		return "", cleanups, fmt.Errorf("error encoding the OSIN config")
+		return nil, cleanups, fmt.Errorf("error encoding the OSIN config")
 	}
 
 	if err = oc.AsAdmin().Run("create").Args("configmap", "oauth-config", "--from-literal", fmt.Sprintf("oauth.conf=%s", string(configBytes))).Execute(); err != nil {
-		return "", cleanups, err
+		return nil, cleanups, err
 	}
 
 	image, err := getImage(oc)
 	if err != nil {
-		return "", cleanups, err
+		return nil, cleanups, err
 	}
 
 	// finally create the oauth server, wait till it starts running
 	oauthServerPod, err := oauthServerPod(configMaps, secrets, image)
 	if err != nil {
-		return "", cleanups, err
+		return nil, cleanups, err
 	}
 	if _, err := coreClient.Pods(oc.Namespace()).Create(oauthServerPod); err != nil {
-		return "", cleanups, err
+		return nil, cleanups, err
 	}
 
 	err = wait.PollImmediate(1*time.Second, 45*time.Second, func() (bool, error) {
@@ -176,10 +189,15 @@ func DeployOAuthServer(oc *CLI, idps []osinv1.IdentityProvider, configMaps []cor
 		return CheckPodIsReady(*pod), nil
 	})
 	if err != nil {
-		return "", cleanups, err
+		return nil, cleanups, err
 	}
 
-	return routeURL, cleanups, nil
+	tokenReqOptions, err := getTokenOpts(oc.AdminConfig(), routeURL)
+	if err != nil {
+		return nil, cleanups, err
+	}
+
+	return tokenReqOptions, cleanups, nil
 }
 
 func oauthServerPod(configMaps []corev1.ConfigMap, secrets []corev1.Secret, image string) (*corev1.Pod, error) {
@@ -435,4 +453,23 @@ func getImage(oc *CLI) (string, error) {
 		return "", err
 	}
 	return pods.Items[0].Spec.Containers[0].Image, nil
+}
+
+func getTokenOpts(config *restclient.Config, oauthServerURL string) (*tokencmd.RequestTokenOptions, error) {
+	tokenReqOptions := tokencmd.NewRequestTokenOptions(config, nil, "", "", false)
+	// supply the info the client would otherwise ask from .well-known/oauth-authorization-server
+	oauthClientConfig := &osincli.ClientConfig{
+		ClientId:     "openshift-challenging-client",                    // FIXME: create own client
+		AuthorizeUrl: fmt.Sprintf("%s/oauth/authorize", oauthServerURL), // TODO: the endpoints are defined in vendor/github.com/openshift/library-go/pkg/oauth/oauthdiscovery/urls.go
+		TokenUrl:     fmt.Sprintf("%s/oauth/token", oauthServerURL),
+		RedirectUrl:  fmt.Sprintf("%s/oauth/token/implicit", oauthServerURL),
+	}
+
+	if err := osincli.PopulatePKCE(oauthClientConfig); err != nil {
+		return nil, err
+	}
+	tokenReqOptions.OsinConfig = oauthClientConfig
+	tokenReqOptions.Issuer = oauthServerURL
+
+	return tokenReqOptions, nil
 }
