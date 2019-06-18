@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"math/rand"
 	"path"
+	"reflect"
 	"time"
 
 	"github.com/RangelReale/osincli"
 
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -24,8 +26,10 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	legacyconfigv1 "github.com/openshift/api/legacyconfig/v1"
+	oauthv1 "github.com/openshift/api/oauth/v1"
 	osinv1 "github.com/openshift/api/osin/v1"
 	configclient "github.com/openshift/client-go/config/clientset/versioned"
+	oauthclient "github.com/openshift/client-go/oauth/clientset/versioned"
 	"github.com/openshift/library-go/pkg/config/helpers"
 	"github.com/openshift/library-go/pkg/crypto"
 	"github.com/openshift/oc/pkg/helpers/tokencmd"
@@ -85,6 +89,7 @@ func DeployOAuthServer(oc *CLI, idps []osinv1.IdentityProvider, configMaps []cor
 	oauthServerDataDir := FixturePath("testdata", "oauthserver")
 	cleanups := func() {
 		oc.AsAdmin().Run("delete").Args("clusterrolebinding", oc.Namespace()).Execute()
+		oc.AsAdmin().Run("delete").Args("oauthclient", oc.Namespace()).Execute()
 	}
 
 	if err := oc.AsAdmin().Run("create").Args("-f", path.Join(oauthServerDataDir, "oauth-sa.yaml")).Execute(); err != nil {
@@ -172,27 +177,87 @@ func DeployOAuthServer(oc *CLI, idps []osinv1.IdentityProvider, configMaps []cor
 		return nil, cleanups, err
 	}
 
-	// finally create the oauth server, wait till it starts running
+	// prepare the pod def, create secrets and CMs
 	oauthServerPod, err := oauthServerPod(configMaps, secrets, image)
 	if err != nil {
 		return nil, cleanups, err
 	}
-	if _, err := coreClient.Pods(oc.Namespace()).Create(oauthServerPod); err != nil {
-		return nil, cleanups, err
-	}
 
-	err = wait.PollImmediate(1*time.Second, 45*time.Second, func() (bool, error) {
-		pod, err := oc.AdminKubeClient().CoreV1().Pods(oc.Namespace()).Get("test-oauth-server", metav1.GetOptions{})
+	// Lock the next execution - the integrated OAuth server updates the
+	// openshift-{challenging, browser}-client OAuthClients. We want to restore
+	// them so that we can run multiple OAuth servers in parallel -> we need
+	// to create our own OAuth clients though
+
+	var newChallengeRedirectURIs []string
+	err = lockOAuthClients(oc, func() error {
+		oauthClientsClient := oauthclient.NewForConfigOrDie(oc.AdminConfig()).OauthV1().OAuthClients()
+		challengeClient, err := oauthClientsClient.Get("openshift-challenging-client", metav1.GetOptions{})
 		if err != nil {
-			return false, err
+			return fmt.Errorf("could not retrieve the challenging client: %v", err)
 		}
-		return CheckPodIsReady(*pod), nil
+		browserClient, err := oauthClientsClient.Get("openshift-browser-client", metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("could not retrieve the browser client: %v", err)
+		}
+		challengeRedirectURIsBackup := challengeClient.DeepCopy()
+		browserRedirectURIsBackup := browserClient.DeepCopy()
+
+		// finally create the oauth server, wait till it starts running
+		if _, err := coreClient.Pods(oc.Namespace()).Create(oauthServerPod); err != nil {
+			return err
+		}
+
+		waitErr := wait.PollImmediate(1*time.Second, 45*time.Second, func() (bool, error) {
+			pod, err := oc.AdminKubeClient().CoreV1().Pods(oc.Namespace()).Get("test-oauth-server", metav1.GetOptions{})
+			if err != nil {
+				return false, err
+			}
+			if !CheckPodIsReady(*pod) {
+				return false, nil
+			}
+
+			// Check that we are past the OAuth server bootstrap phase
+			challengeClient, err = oauthClientsClient.Get("openshift-challenging-client", metav1.GetOptions{})
+			if err != nil {
+				return false, fmt.Errorf("could not retrieve the challenging client: %v", err)
+			}
+			browserClient, err = oauthClientsClient.Get("openshift-browser-client", metav1.GetOptions{})
+			if err != nil {
+				return false, fmt.Errorf("could not retrieve the browser client: %v", err)
+			}
+			if reflect.DeepEqual(challengeClient.RedirectURIs, challengeRedirectURIsBackup.RedirectURIs) ||
+				reflect.DeepEqual(browserClient.RedirectURIs, browserRedirectURIsBackup.RedirectURIs) {
+				return false, nil
+			}
+
+			return true, nil
+		})
+
+		newChallengeRedirectURIs = challengeClient.RedirectURIs
+		challengeRedirectURIsBackup.ResourceVersion = challengeClient.ResourceVersion
+		browserRedirectURIsBackup.ResourceVersion = browserClient.ResourceVersion
+
+		if _, err = oauthClientsClient.Update(challengeRedirectURIsBackup); err != nil {
+			panic(fmt.Errorf("could not update the challenging client: %v", err))
+		}
+
+		if _, err = oauthClientsClient.Update(browserRedirectURIsBackup); err != nil {
+			panic(fmt.Errorf("could not update the browser client: %v", err))
+		}
+
+		if waitErr != nil {
+			return fmt.Errorf("error waiting for the OAuth server to become ready: %v", err)
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, cleanups, err
 	}
 
-	tokenReqOptions, err := getTokenOpts(oc.AdminConfig(), routeURL)
+	if err = createOAuthClient(oc.AdminConfig(), oc.Namespace(), newChallengeRedirectURIs); err != nil {
+		return nil, cleanups, err
+	}
+	tokenReqOptions, err := getTokenOpts(oc.AdminConfig(), routeURL, oc.Namespace())
 	if err != nil {
 		return nil, cleanups, err
 	}
@@ -455,11 +520,11 @@ func getImage(oc *CLI) (string, error) {
 	return pods.Items[0].Spec.Containers[0].Image, nil
 }
 
-func getTokenOpts(config *restclient.Config, oauthServerURL string) (*tokencmd.RequestTokenOptions, error) {
+func getTokenOpts(config *restclient.Config, oauthServerURL, oauthClientName string) (*tokencmd.RequestTokenOptions, error) {
 	tokenReqOptions := tokencmd.NewRequestTokenOptions(config, nil, "", "", false)
 	// supply the info the client would otherwise ask from .well-known/oauth-authorization-server
 	oauthClientConfig := &osincli.ClientConfig{
-		ClientId:     "openshift-challenging-client",                    // FIXME: create own client
+		ClientId:     oauthClientName,
 		AuthorizeUrl: fmt.Sprintf("%s/oauth/authorize", oauthServerURL), // TODO: the endpoints are defined in vendor/github.com/openshift/library-go/pkg/oauth/oauthdiscovery/urls.go
 		TokenUrl:     fmt.Sprintf("%s/oauth/token", oauthServerURL),
 		RedirectUrl:  fmt.Sprintf("%s/oauth/token/implicit", oauthServerURL),
@@ -472,4 +537,54 @@ func getTokenOpts(config *restclient.Config, oauthServerURL string) (*tokencmd.R
 	tokenReqOptions.Issuer = oauthServerURL
 
 	return tokenReqOptions, nil
+}
+
+func lockOAuthClients(oc *CLI, wrapped func() error) error {
+	_, err := oc.AdminKubeClient().CoreV1().ConfigMaps("openshift-config-managed").
+		Create(&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "e2e-oauthserver-oauthclients-lock",
+				Namespace: "openshift-config-managed",
+			},
+		})
+	if apierrors.IsAlreadyExists(err) {
+		err = wait.PollImmediate(1*time.Second, 45*time.Second, func() (bool, error) {
+			_, err := oc.AdminKubeClient().CoreV1().ConfigMaps("openshift-config-managed").
+				Create(&corev1.ConfigMap{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "e2e-oauthserver-oauthclients-lock",
+						Namespace: "openshift-config-managed",
+					},
+				})
+			if err == nil {
+				return true, nil
+			} else if !apierrors.IsAlreadyExists(err) {
+				return false, err
+			}
+			return false, nil
+		})
+	}
+
+	if err != nil {
+		return err
+	}
+
+	wrappedError := wrapped()
+	if err = oc.AdminKubeClient().CoreV1().ConfigMaps("openshift-config-managed").Delete("e2e-oauthserver-oauthclients-lock", &metav1.DeleteOptions{}); err != nil {
+		panic(err) // This is bad
+	}
+	return wrappedError
+}
+
+func createOAuthClient(adminConfig *restclient.Config, name string, redirectURIs []string) error {
+	_, err := oauthclient.NewForConfigOrDie(adminConfig).OauthV1().OAuthClients().
+		Create(&oauthv1.OAuthClient{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: name,
+			},
+			GrantMethod:           oauthv1.GrantHandlerAuto,
+			RedirectURIs:          redirectURIs,
+			RespondWithChallenges: true,
+		})
+	return err
 }
