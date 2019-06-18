@@ -3,7 +3,6 @@ package oauth
 import (
 	"io/ioutil"
 	"net/http"
-	"time"
 
 	g "github.com/onsi/ginkgo"
 	o "github.com/onsi/gomega"
@@ -15,6 +14,7 @@ import (
 	e2e "k8s.io/kubernetes/test/e2e/framework"
 
 	osinv1 "github.com/openshift/api/osin/v1"
+	"github.com/openshift/oc/pkg/helpers/tokencmd"
 	exutil "github.com/openshift/origin/test/extended/util"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -36,29 +36,13 @@ var _ = g.Describe("[Suite:openshift/oauth/run-oauth-server] Run the integrated 
 		oc = exutil.NewCLI("oauth-server-configure", exutil.KubeConfigPath())
 	)
 
-	// g.It("should successfully be configured and be responsive", func() {
-	// 	serverAddress, cleanup, err := exutil.DeployOAuthServer(oc, []osinv1.IdentityProvider{}, nil, nil)
-	// 	defer cleanup()
-	// 	o.Expect(err).ToNot(o.HaveOccurred())
-	// 	e2e.Logf("got the OAuth server address: %s", serverAddress)
-
-	// 	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // FIXME: VERY VERY UGLY, don't do this at home
-	// 	resp, err := http.Get(serverAddress)
-	// 	o.Expect(err).ToNot(o.HaveOccurred())
-	// 	defer resp.Body.Close()
-
-	// 	body, err := ioutil.ReadAll(resp.Body)
-	// 	e2e.Logf("The body received: %s", string(body))
-	// 	o.Expect(err).ToNot(o.HaveOccurred())
-	// })
-
-	g.It("should successfully be configured and be responsive", func() {
+	g.It("should successfully configure htpasswd and be responsive", func() {
 		secrets := []corev1.Secret{{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "htpasswd-secret",
 			},
 			Data: map[string][]byte{
-				"htpasswd": []byte("testuser:$2y$05$pOYBCbJ1RXr.vDzPXdyTxuE96Nojc9dNI9R3QjkWUj2t/Ae/jmFy."), // userinfo testuser:password
+				"htpasswd": []byte("testuser:$apr1$iD9QmkLW$dfVpx1X7533hKAVSiRfhd1"), // userinfo testuser:password
 			},
 		}}
 
@@ -80,10 +64,21 @@ var _ = g.Describe("[Suite:openshift/oauth/run-oauth-server] Run the integrated 
 		resp, err := http.Get(serverAddress)
 		o.Expect(err).ToNot(o.HaveOccurred())
 		defer resp.Body.Close()
-
-		time.Sleep(2 * time.Minute)
 		body, err := ioutil.ReadAll(resp.Body)
 		e2e.Logf("The body received: %s", string(body))
+		o.Expect(err).ToNot(o.HaveOccurred())
+
+		// I could not quite figure this out
+		challengingClient, err := oc.AdminOAuthClient().OauthV1().OAuthClients().Get("openshift-challenging-client", metav1.GetOptions{})
+		o.Expect(err).ToNot(o.HaveOccurred())
+		tokenOpts := tokencmd.NewRequestTokenOptions(oc.AdminConfig(), nil, "testuser", "password", false)
+		err = tokenOpts.SetDefaultOsinConfig()
+		o.Expect(err).NotTo(o.HaveOccurred())
+		tokenOpts.OsinConfig.ClientId = challengingClient.Name
+		tokenOpts.OsinConfig.RedirectUrl = challengingClient.RedirectURIs[0]
+		e2e.Logf("The RedirectURI: %s", tokenOpts.OsinConfig.RedirectUrl)
+		token, err := tokenOpts.RequestToken()
+		e2e.Logf("The token: %s", token)
 		o.Expect(err).ToNot(o.HaveOccurred())
 	})
 })
