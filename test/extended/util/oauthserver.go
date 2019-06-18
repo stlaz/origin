@@ -29,7 +29,6 @@ import (
 	oauthv1 "github.com/openshift/api/oauth/v1"
 	osinv1 "github.com/openshift/api/osin/v1"
 	configclient "github.com/openshift/client-go/config/clientset/versioned"
-	oauthclient "github.com/openshift/client-go/oauth/clientset/versioned"
 	"github.com/openshift/library-go/pkg/config/helpers"
 	"github.com/openshift/library-go/pkg/crypto"
 	"github.com/openshift/oc/pkg/helpers/tokencmd"
@@ -99,7 +98,7 @@ func DeployOAuthServer(oc *CLI, idps []osinv1.IdentityProvider, configMaps []cor
 	// the oauth server needs access to kube-system configmaps/extension-apiserver-authentication
 	oauthSARolebinding := &rbacv1.ClusterRoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: oc.Namespace(), // TODO: probably something more cleaver?
+			Name: oc.Namespace(),
 		},
 		RoleRef: rbacv1.RoleRef{
 			APIGroup: rbacv1.GroupName,
@@ -190,7 +189,7 @@ func DeployOAuthServer(oc *CLI, idps []osinv1.IdentityProvider, configMaps []cor
 
 	var newChallengeRedirectURIs []string
 	err = lockOAuthClients(oc, func() error {
-		oauthClientsClient := oauthclient.NewForConfigOrDie(oc.AdminConfig()).OauthV1().OAuthClients()
+		oauthClientsClient := oc.AdminOAuthClient().OauthV1().OAuthClients()
 		challengeClient, err := oauthClientsClient.Get("openshift-challenging-client", metav1.GetOptions{})
 		if err != nil {
 			return fmt.Errorf("could not retrieve the challenging client: %v", err)
@@ -254,7 +253,7 @@ func DeployOAuthServer(oc *CLI, idps []osinv1.IdentityProvider, configMaps []cor
 		return nil, cleanups, err
 	}
 
-	if err = createOAuthClient(oc.AdminConfig(), oc.Namespace(), newChallengeRedirectURIs); err != nil {
+	if err = createOAuthClient(oc, newChallengeRedirectURIs); err != nil {
 		return nil, cleanups, err
 	}
 	tokenReqOptions, err := getTokenOpts(oc.AdminConfig(), routeURL, oc.Namespace())
@@ -576,11 +575,11 @@ func lockOAuthClients(oc *CLI, wrapped func() error) error {
 	return wrappedError
 }
 
-func createOAuthClient(adminConfig *restclient.Config, name string, redirectURIs []string) error {
-	_, err := oauthclient.NewForConfigOrDie(adminConfig).OauthV1().OAuthClients().
+func createOAuthClient(oc *CLI, redirectURIs []string) error {
+	_, err := oc.AdminOAuthClient().OauthV1().OAuthClients().
 		Create(&oauthv1.OAuthClient{
 			ObjectMeta: metav1.ObjectMeta{
-				Name: name,
+				Name: oc.Namespace(),
 			},
 			GrantMethod:           oauthv1.GrantHandlerAuto,
 			RedirectURIs:          redirectURIs,

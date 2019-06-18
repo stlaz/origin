@@ -187,7 +187,6 @@
 // test/extended/testdata/oauthserver/oauth-pod.yaml
 // test/extended/testdata/oauthserver/oauth-sa.yaml
 // test/extended/testdata/oauthserver/oauth-server.yaml
-// test/extended/testdata/oauthserver/session-secret.yaml
 // test/extended/testdata/openshift-secret-to-jenkins-credential.yaml
 // test/extended/testdata/reencrypt-serving-cert.yaml
 // test/extended/testdata/releases/payload-1/etcd-operator/image-references
@@ -10711,31 +10710,6 @@ func testExtendedTestdataOauthserverOauthServerYaml() (*asset, error) {
 	}
 
 	info := bindataFileInfo{name: "test/extended/testdata/oauthserver/oauth-server.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
-	a := &asset{bytes: bytes, info: info}
-	return a, nil
-}
-
-var _testExtendedTestdataOauthserverSessionSecretYaml = []byte(`apiVersion: v1
-data:
-  session: eyJraW5kIjoiU2Vzc2lvblNlY3JldHMiLCJhcGlWZXJzaW9uIjoidjEiLCJzZWNyZXRzIjpbeyJhdXRoZW50aWNhdGlvbiI6IkdqNDk3TjlwWDIySkRKSUsxWTlWc3F4WmpHa25FS24tVWtuVFpNcUJSR2NUeFM2WnYwcUFqenVpc09oLXBiVkkiLCJlbmNyeXB0aW9uIjoicHF0RnZ5ek5SSmt5YncySmtLT0J0eFZ0MWVBSm4zb2QifV19
-kind: Secret
-metadata:
-  labels:
-    app: test-oauth-server
-  name: session-secret # this secret should be generated
-`)
-
-func testExtendedTestdataOauthserverSessionSecretYamlBytes() ([]byte, error) {
-	return _testExtendedTestdataOauthserverSessionSecretYaml, nil
-}
-
-func testExtendedTestdataOauthserverSessionSecretYaml() (*asset, error) {
-	bytes, err := testExtendedTestdataOauthserverSessionSecretYamlBytes()
-	if err != nil {
-		return nil, err
-	}
-
-	info := bindataFileInfo{name: "test/extended/testdata/oauthserver/session-secret.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
 	a := &asset{bytes: bytes, info: info}
 	return a, nil
 }
@@ -33037,7 +33011,6 @@ var _bindata = map[string]func() (*asset, error){
 	"test/extended/testdata/oauthserver/oauth-pod.yaml": testExtendedTestdataOauthserverOauthPodYaml,
 	"test/extended/testdata/oauthserver/oauth-sa.yaml": testExtendedTestdataOauthserverOauthSaYaml,
 	"test/extended/testdata/oauthserver/oauth-server.yaml": testExtendedTestdataOauthserverOauthServerYaml,
-	"test/extended/testdata/oauthserver/session-secret.yaml": testExtendedTestdataOauthserverSessionSecretYaml,
 	"test/extended/testdata/openshift-secret-to-jenkins-credential.yaml": testExtendedTestdataOpenshiftSecretToJenkinsCredentialYaml,
 	"test/extended/testdata/reencrypt-serving-cert.yaml": testExtendedTestdataReencryptServingCertYaml,
 	"test/extended/testdata/releases/payload-1/etcd-operator/image-references": testExtendedTestdataReleasesPayload1EtcdOperatorImageReferences,
@@ -33536,7 +33509,6 @@ var _bintree = &bintree{nil, map[string]*bintree{
 					"oauth-pod.yaml": &bintree{testExtendedTestdataOauthserverOauthPodYaml, map[string]*bintree{}},
 					"oauth-sa.yaml": &bintree{testExtendedTestdataOauthserverOauthSaYaml, map[string]*bintree{}},
 					"oauth-server.yaml": &bintree{testExtendedTestdataOauthserverOauthServerYaml, map[string]*bintree{}},
-					"session-secret.yaml": &bintree{testExtendedTestdataOauthserverSessionSecretYaml, map[string]*bintree{}},
 				}},
 				"openshift-secret-to-jenkins-credential.yaml": &bintree{testExtendedTestdataOpenshiftSecretToJenkinsCredentialYaml, map[string]*bintree{}},
 				"reencrypt-serving-cert.yaml": &bintree{testExtendedTestdataReencryptServingCertYaml, map[string]*bintree{}},
